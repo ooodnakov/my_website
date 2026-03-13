@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>События</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="https://dnakov.ooo/style.css">
+    <link rel="stylesheet" href="https://dnakov.ooo/pink_style.css">    
+    <link rel="canonical" href="https://events.dnakov.ooo"/>
+</head>
+<style>
+    .container {
+    width: 100%;
+    height: 100%;
+    padding-right: 15px;
+    padding-left: 15px;
+    margin-right: auto;
+    margin-left: auto;
+    }
+
+    .links-container {
+    display: flex;
+    flex-direction: column;
+    jusify-content: center;
+    align-items: center;
+    }
+
+    .links-container a {
+    width: 80%;
+    }
+    .gc {
+    width: 20% !important;
+    text-align: center;
+    display: inline-block;
+    }
+    .imglogo {
+    vertical-align: middle;
+    }
+    .w3-theme-l1:hover {
+    background-color: #59e587 !important;
+    }
+
+    .margin-top-2 {
+    margin-top: 32px;
+    }
+
+    .bottom {
+    width: 100%;
+    text-align: center;
+    width: auto;
+    font-weight: bolder;
+    }
+
+    .bottom span {
+    color: #63ff97;
+    }
+
+    .bottom svg {
+    stroke: #63ff97;
+    fill: #63ff97 ;
+    }
+
+    @media (min-width: 768px) {
+    .link {
+        width: 100%;
+    }
+    }
+    @media (min-width: 576px) {
+    .container {
+        max-width: 540px;
+    }
+    }
+</style>
+
+<body>
+    <div class="bg"></div>
+    <div class="container">
+    
+    <h1 class="margin-top-2" style="text-align: center">Список будущих событий</h1>
+
+    <div class="links-container" id="topSectionFuture">
+    </div>
+
+    <h4 class="margin-top-2" style="text-align: center">Список прошлых событий</h1>
+
+    <div class="links-container" id="topSectionPast">
+    </div>
+
+    
+    <div style="text-align: center">
+        <h1>Только для Сани</h1>
+    <input type="password" id="password" placeholder="Пароль">
+    </div>
+    
+    <div id="hiddenSubsection" style="display:none;text-align: center">
+        <form id="subsectionForm">
+            <label for="text">Название:</label>
+            <input type="text" id="text" required><br>
+            <label for="dateTime">Время:</label>
+            <input type="datetime-local" id="dateTime" required><br>
+            <label for="duration">Длительность:</label>
+            <input list="duration_list" id="duration" placeholder="например: 2 часа" required><br>
+            <label for="chatLink">Ссылка:</label>
+            <input type="url" id="chatLink" placeholder="https://t.me/..." required><br>
+            <button type="submit">Добавить</button>
+        </form>
+        <br>
+        <form id="subsectionFormDelete">
+            <label for="number">Индекс:</label>
+            <input type="number" id="indexV" required><br>
+            <button type="submit">Удалить</button>
+        </form>
+    </div>
+    <datalist id="duration_list">
+        <option value="1 час">
+        <option value="2 часа">
+        <option value="3 часа">
+        <option value="4 часа">
+        <option value="5 часов">
+    </datalist>
+</div>
+
+    <script>
+        // Check password, load events, and save event functions
+        async function serverRequest(enteredPassword, action, text = null, dateTime = null, duration = null, chatLink = null, indexV = null) {
+            console.log(indexV)
+            const response = await fetch('check_password.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `password=${encodeURIComponent(enteredPassword)}&action=${action}&text=${text}&dateTime=${dateTime}&duration=${duration}&chatLink=${chatLink}&indexV=${indexV}`,
+            });
+            const result = await response.text();
+            return result;
+        }
+        
+        // Format date & time
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            const options = {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                weekday: 'short',
+            };
+            return date.toLocaleString(undefined, options);
+        }
+        
+        // Make Google Calendar link
+        function createGoogleCalendarEventLink(eventName, dateTimeLocale, duration, description) {
+            const eventStartTime = new Date(dateTimeLocale);
+            const durationHours = parseInt(duration.substring(0,1))
+            const eventEndTime = new Date(eventStartTime.getTime() + durationHours * 60 * 60000);
+            const encode = encodeURIComponent;
+            const formatDate = (date) => {
+            return date.toISOString().replace(/-|:|\.\d+/g, '');
+            };
+        
+            const calendarUrl = 'https://www.google.com/calendar/render?action=TEMPLATE';
+            const startParam = `&dates=${formatDate(eventStartTime)}`;
+            const endParam = `/${formatDate(eventEndTime)}`;
+            const textParam = `&text=${encode(eventName)}`;
+            const descriptionParam = description ? `&details=${encode(description)}` : '';
+        
+            const eventLink = `${calendarUrl}${startParam}${endParam}${textParam}${descriptionParam}`;
+            return eventLink;
+        };
+        
+        // Add an event to the top section
+        function addEventToTopSection(text, dateTime, duration, chatLink,future) {
+            const formattedDateTime = formatDate(dateTime);
+            const newEntry = document.createElement('div');
+            const googleCalendarLink = createGoogleCalendarEventLink(text,dateTime,duration,chatLink);
+            newEntry.innerHTML = 
+            `<a href="${chatLink}" target="_blank" class="w3-button w3-round-medium w3-theme-l1 w3-border link">${text} - ${duration}
+            <br>
+            ${formattedDateTime} </a>
+            <a style="padding-top:18px" class="gc w3-button w3-round-medium w3-theme-l1 w3-border link" href="${googleCalendarLink}" target="_blank">
+                <div >
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/a/a5/Google_Calendar_icon_%282020%29.svg" class="imglogo" alt="image" width="250px" height="250px">
+                </div>
+            </a>`;
+            cl =  "";
+            newEntry.style = "display: flex"
+            if(future){
+                document.getElementById('topSectionFuture').appendChild(newEntry);
+                document.getElementById('topSectionFuture').appendChild(document.createElement("br"));
+            }else{
+                document.getElementById('topSectionPast').appendChild(newEntry);
+                document.getElementById('topSectionPast').appendChild(document.createElement("br"));
+
+            }
+        }
+
+        // Load events from the server
+        async function loadEvents() {
+            const response = await fetch('load_events.php');
+            const events = await response.json();
+            console.log(events!="")
+            if (events !== null && events!={}) {
+                events.forEach(event => {
+                    const d = new Date();
+                    const dateTimeLocalValue = (new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString()).slice(0, -1);
+                    const future = event.dateTime>dateTimeLocalValue
+                    addEventToTopSection(event.text, event.dateTime, event.duration, event.chatLink,future);
+                });
+            }
+        }
+        loadEvents();
+        // Save event to the server
+        async function saveEvent(enteredPassword, text, dateTime, duration, chatLink) {
+            const success = await serverRequest(enteredPassword, "save_event", text, dateTime, duration, chatLink);
+            console.log(success)
+            if (success === "success") {
+                addEventToTopSection(text, dateTime, duration, chatLink, true);
+            }
+        }
+        // Delete event from the server
+        async function deleteEvent(enteredPassword, indexV) {
+            const success = await serverRequest(enteredPassword, "delete_event",null,null,null,null, indexV);
+            console.log('d', success)
+        }
+
+        // Show hidden subsection if password is correct
+        document.getElementById('password').addEventListener('input', async function (event) {
+            const enteredPassword = event.target.value;
+            const hiddenSubsection = document.getElementById('hiddenSubsection');
+
+            if (enteredPassword.length > 0) {
+                const result = await serverRequest(enteredPassword, "check_password");
+                console.log('e',result)
+                if (result === 'success') {
+                    hiddenSubsection.style.display = 'block';
+                } else {
+                    hiddenSubsection.style.display = 'none';
+                }
+            } else {
+                hiddenSubsection.style.display = 'none';
+            }
+        });
+
+        // Add new entry to top section and save it to the server when the form is submitted
+        document.getElementById('subsectionForm').addEventListener('submit', function (event) {
+            event.preventDefault();
+
+            const enteredPassword = document.getElementById('password').value;
+            const text = document.getElementById('text').value;
+            const dateTime = document.getElementById('dateTime').value;
+            const duration = document.getElementById('duration').value;
+            const chatLink = document.getElementById('chatLink').value;
+            console.log(chatLink)
+            saveEvent(enteredPassword, text, dateTime, duration, chatLink);
+        });
+        document.getElementById('subsectionFormDelete').addEventListener('submit', function (event) {
+            event.preventDefault();
+
+            const enteredPassword = document.getElementById('password').value;
+            const indexV = document.getElementById('indexV').value;
+            console.log(indexV)
+            deleteEvent(enteredPassword, indexV);
+        });
+    </script>
+</body>
+</html>

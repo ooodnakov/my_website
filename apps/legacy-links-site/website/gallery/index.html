@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Switcher</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            flex-direction: column;
+        }
+        #image-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #image-container img {
+            max-width: 100%;
+            max-height: 500px;
+            border: 1px solid #ccc;
+        }
+        .button-container button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            border: none;
+            background-color: #007BFF;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 5px;
+        }
+        .button-container button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="image-container">
+        <img id="current-image" src="dirt2.png" alt="Image 1">
+    </div>
+    <div class="button-container">
+        <button id="prev-button" onclick="prevImage()">Previous</button>
+        <button id="next-button" onclick="nextImage()">Next</button>
+    </div>
+    
+    <script>
+        const images = [
+            'dirt2.png',
+            'planks_oak2.png',
+            'stone2.png',
+            // Add more image URLs as needed
+        ];
+        
+        let currentIndex = 0;
+
+        function updateImage() {
+            const imageElement = document.getElementById('current-image');
+            imageElement.src = images[currentIndex];
+            imageElement.alt = '';
+
+            document.getElementById('prev-button').disabled = currentIndex === 0;
+            document.getElementById('next-button').disabled = currentIndex === images.length - 1;
+        }
+
+        function prevImage() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                updateImage();
+            }
+        }
+
+        function nextImage() {
+            if (currentIndex < images.length - 1) {
+                currentIndex++;
+                updateImage();
+            }
+        }
+
+        updateImage();
+    </script>
+</body>
+</html>

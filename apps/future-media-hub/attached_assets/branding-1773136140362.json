@@ -1,0 +1,110 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "Roboto",
+      "role": "body"
+    },
+    {
+      "family": "Font Awesome 6 Brands",
+      "role": "unknown"
+    },
+    {
+      "family": "Font Awesome 6 Free",
+      "role": "unknown"
+    }
+  ],
+  "colors": {
+    "primary": "#FFFF00",
+    "accent": "#008080",
+    "background": "#FFFFFF",
+    "textPrimary": "#000000",
+    "link": "#008080"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Roboto",
+      "heading": "Roboto"
+    },
+    "fontStacks": {
+      "heading": [
+        "Roboto",
+        "sans-serif"
+      ],
+      "body": [
+        "Roboto",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Roboto",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "32px",
+      "h2": "32px",
+      "body": "19.2px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 10,
+    "borderRadius": "4px"
+  },
+  "components": {
+    "buttonPrimary": {
+      "background": "#FFFFFF",
+      "textColor": "#888888",
+      "borderRadius": "10px",
+      "borderRadiusCorners": {
+        "topLeft": "10px",
+        "topRight": "10px",
+        "bottomRight": "10px",
+        "bottomLeft": "10px"
+      },
+      "shadow": "rgba(0, 0, 0, 0) 0px 0px 1px 0px"
+    }
+  },
+  "images": {
+    "logo": null,
+    "favicon": "https://dnakov.ooo/assets/linkstack/images/logo.svg",
+    "ogImage": "https://dnakov.ooo/assets/img/1_1754135192.png"
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 10,
+      "text": "Share",
+      "reasoning": "The 'Share' button is the most action-oriented and stands out due to its unique purpose compared to other buttons, which are more informational."
+    },
+    "secondary": {
+      "index": 3,
+      "text": "CV",
+      "reasoning": "The 'CV' button is a common secondary action, providing additional information about the individual, and is distinct from the primary 'Share' action."
+    },
+    "confidence": 0.85
+  },
+  "personality": {
+    "tone": "modern",
+    "energy": "medium",
+    "targetAudience": "tech-savvy individuals"
+  },
+  "designSystem": {
+    "framework": "custom",
+    "componentLibrary": ""
+  },
+  "confidence": {
+    "buttons": 0.85,
+    "colors": 0.9,
+    "overall": 0.875
+  },
+  "__llm_metadata": {
+    "logoSelection": {
+      "llmCalled": false,
+      "llmSucceeded": false,
+      "finalSource": "none"
+    },
+    "buttonClassification": {
+      "llmCalled": true,
+      "llmSucceeded": true
+    }
+  }
+}

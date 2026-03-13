@@ -1,0 +1,282 @@
+
+> rest-express@1.0.0 dev:client
+> vite dev --port 5000
+
+[1G[0K
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J
+  [32m[1mVITE[22m v7.3.1[39m  [2mready in [0m[1m497[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5000[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.31.69.66:[1m5000[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m9:51:33 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m Pre-transform error: Cannot apply unknown utility class `glass-panel`
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:51:34 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:51:36 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20) [33m(x2)[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:52:10 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20) [33m(x3)[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:52:17 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20) [33m(x4)[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:52:23 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20) [33m(x5)[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m9:52:30 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: Cannot apply unknown utility class `glass-panel`[39m
+  Plugin: [35m@tailwindcss/vite:generate:serve[39m
+  File: [36m/home/runner/workspace/client/src/index.css[39m
+      at onInvalidCandidate (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:1511)
+      at Ce (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:16:36326)
+      at file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:355
+      at br (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1718)
+      at I (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:3:1377)
+      at Ae (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:21:172)
+      at Wi (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:294)
+      at async Za (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:631)
+      at async rf (file:///home/runner/workspace/node_modules/tailwindcss/dist/chunk-CT46QCH7.mjs:38:1406)
+      at async lu (file:///home/runner/workspace/node_modules/@tailwindcss/node/dist/index.mjs:10:3458)
+      at async F.generate (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:4349)
+      at async TransformPluginContext.handler (file:///home/runner/workspace/node_modules/@tailwindcss/vite/dist/index.mjs:1:2540)
+      at async EnvironmentPluginContainer.transform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:28797:14)
+      at async loadAndTransform (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:22670:26)
+      at async viteTransformMiddleware (file:///home/runner/workspace/node_modules/vite/dist/node/chunks/config.js:24542:20) [33m(x6)[39m

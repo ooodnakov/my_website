@@ -1,0 +1,320 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0px;
+  font-family: Ubuntu, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 32px;
+  color: rgb(34, 34, 34);
+  background-color: rgb(242, 244, 246);
+  overflow-x: hidden;
+}
+
+ul {
+  list-style-type: none;
+}
+
+.flex-container {
+  display: flex;
+  flex-flow: row wrap;
+  place-content: flex-start space-around;
+  align-items: stretch;
+  padding: 0px;
+  margin: 0px;
+  list-style: none;
+}
+
+.flex-item {
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.067);
+  width: 424px;
+  margin: 5px 5px 15px;
+  padding: 4px;
+  text-align: center;
+  border-radius: 10px;
+}
+
+.flex-item:first-child {
+  width: 100%;
+}
+
+.flex-item:not(:first-child):not(:last-child) {
+  flex: 1 1 424px;
+  max-width: 424px;
+}
+
+.page-header {
+  background-image: url("https://dnakov.ooo/projects/img/logo.svg");
+  background-repeat: repeat-x;
+  background-position: center top;
+}
+
+.background-pic {
+  background: url("https://dnakov.ooo/projects/img/clouds.webp") center bottom / 100% no-repeat, url("https://main.dnakov.ooo/projects/img/hero-bg.jpg") center top / cover no-repeat;
+  width: 100%;
+  height: 1200px;
+}
+
+.container {
+  max-width: 928px;
+  margin: 0px auto;
+  padding: 0px 16px;
+}
+
+.page-header {
+  margin: 0px 0px 160px;
+  padding: 32px 0px 16px;
+}
+
+.page-header .container, .page-footer .container {
+  max-width: 1408px;
+  text-align: right;
+}
+
+.page-header a {
+  margin-left: 56px;
+  color: rgb(255, 255, 255);
+  text-decoration: none;
+  background-repeat: no-repeat;
+  background-position: left center;
+}
+
+.hero-image .container {
+  max-width: 1408px;
+  text-align: center;
+}
+
+.heading {
+  margin: 0px 0px 16px;
+  font-size: 88px;
+  line-height: 96px;
+  font-weight: 400;
+  color: rgb(255, 255, 255);
+}
+
+.hero-image p {
+  margin: 0px;
+  font-size: 32px;
+  line-height: 48px;
+}
+
+.intro {
+  margin: 0px 0px 60px;
+}
+
+.subheading {
+  margin: 0px 0px 56px;
+  font-size: 64px;
+  line-height: 80px;
+  font-weight: 500;
+}
+
+.user-image {
+  margin: 0px 0px 32px;
+  text-align: center;
+}
+
+.intro h3, .portfolio h3 {
+  margin: 0px 0px 12px;
+  font-size: 24px;
+  line-height: 40px;
+  font-weight: 500;
+}
+
+div .o-up {
+  margin-top: 50px;
+  position: relative;
+}
+
+div .o, div .o-1, div .o-2, div .o-3, div .o-4, div .o-5, div .o-dnako {
+  display: inline-block;
+  background-size: auto 100%;
+  background-repeat: no-repeat;
+  height: 50px;
+  width: 30px;
+}
+
+div .o-1 {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-begin-wide.svg");
+}
+
+div .o-2 {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-between.svg");
+  background-repeat: repeat-x;
+  width: calc(50vw + 418px);
+  position: absolute;
+}
+
+div .o-3 {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-between.svg");
+  position: absolute;
+  left: 0px;
+  background-repeat: repeat-x;
+  width: calc(50% - 464px);
+}
+
+div .o-4 {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-between.svg");
+  position: absolute;
+  right: -30px;
+  background-repeat: repeat-x;
+  width: 30px;
+}
+
+div .o-5 {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-end-wide.svg");
+  position: absolute;
+  right: -100%;
+  background-position: right center;
+}
+
+div .o-dnako {
+  background-image: url("https://main.dnakov.ooo/projects/img/O-dnako.svg");
+  position: absolute;
+  right: -1700%;
+  width: 1700%;
+}
+
+.level {
+  margin: 4px 0px 16px;
+  padding: 0px;
+  height: 14px;
+  font-size: 0px;
+  background-color: rgb(255, 255, 255);
+  border: 1px solid rgb(134, 195, 250);
+  border-radius: 8px;
+}
+
+.level div {
+  margin: 1px;
+  height: 12px;
+  background-color: rgb(40, 139, 230);
+  border-radius: 6px;
+}
+
+.portfolio {
+  margin: 0px 0px 120px;
+}
+
+.button {
+  padding: 6px 20px;
+  display: inline-block;
+  vertical-align: baseline;
+  text-decoration: none;
+  text-transform: uppercase;
+  border-radius: 4px;
+  margin: 4px;
+  background-color: rgb(100, 255, 151);
+  color: rgb(17, 17, 17);
+}
+
+.page-footer {
+  padding: 10px 0px;
+  background-color: rgb(0, 65, 125);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: rgb(255, 255, 255);
+}
+
+.page-footer a {
+  margin-left: 24px;
+  color: inherit;
+  text-decoration: none;
+  background-repeat: no-repeat;
+  background-position: left center;
+}
+
+.contact {
+  padding-left: 30px;
+  background-size: 20px;
+  color: rgb(255, 255, 255);
+}
+
+.contact-email {
+  background-image: url("https://main.dnakov.ooo/projects/img/icon-email.svg");
+}
+
+.contact-vk {
+  background-image: url("https://main.dnakov.ooo/projects/img/icon-vk.svg");
+  background-size: 22px;
+}
+
+.contact-telegram {
+  background-image: url("https://main.dnakov.ooo/projects/img/icon-telegram.svg");
+}
+
+.contact-twitter {
+  background-image: url("https://main.dnakov.ooo/projects/img/icon-twitter.svg");
+}
+
+.contact-instagram {
+  background-image: url("https://main.dnakov.ooo/projects/img/icon-instagram.svg");
+  background-size: 18px;
+}
+
+@media only screen and (max-width: 928px) {
+  div .o-2 {
+      width: calc(100% - 14px);
+  }
+}
+
+@media only screen and (max-width: 580px) {
+  .background-pic {
+      background-size: 100%, auto 100%;
+      width: 100%;
+      height: 600px;
+  }
+
+  .heading {
+      margin: 0px 0px 8px;
+      font-size: 44px;
+      line-height: 48px;
+  }
+
+  .subheading {
+      margin: 0px 0px 28px;
+      font-size: 32px;
+      text-align: left;
+      line-height: 40px;
+  }
+
+  .page-header {
+      margin: 0px 0px 20px;
+  }
+
+  .contact-text {
+      display: none;
+  }
+
+  .page-header {
+      background-position: left top;
+  }
+
+  div .o-up {
+      margin-top: 25px;
+  }
+
+  div .o, div .o-1, div .o-2, div .o-3, div .o-4, div .o-5, div .o-dnako {
+      height: 25px;
+      width: 15px;
+  }
+
+  div .o-2 {
+      width: calc(100% + 1px);
+  }
+
+  div .o-4 {
+      right: -15px;
+      width: 15px;
+  }
+
+  div .o-5 {
+      right: -100%;
+  }
+
+  div .o-dnako {
+      width: 1700%;
+  }
+}

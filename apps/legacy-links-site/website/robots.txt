@@ -1,0 +1,12 @@
+User-agent: *
+Disallow: /files
+Disallow: /img
+Disallow: /projects/files
+Disallow: /projects/img
+Allow: /projects
+Allow: /events
+Allow: *.css
+Host: dnakov.ooo
+
+Sitemap: https://dnakov.ooo/sitemap.xml
+
