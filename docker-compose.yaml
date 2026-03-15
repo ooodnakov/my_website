@@ -1,0 +1,20 @@
+services:
+  linksweb:
+    build:
+      context: .
+      dockerfile: ./apps/future-media-hub/Dockerfile
+    container_name: linksweb
+    hostname: linksweb
+    environment:
+      TZ: "UTC"
+      NODE_ENV: "production"
+      PORT: "5000"
+    # ports:
+    #   - "8082:5000"
+    restart: unless-stopped
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

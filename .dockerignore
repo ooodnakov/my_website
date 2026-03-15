@@ -1,0 +1,14 @@
+.git
+node_modules
+dist
+archive
+
+apps/**/node_modules
+apps/**/dist
+apps/**/.vite
+apps/**/.cache
+apps/**/.turbo
+apps/**/.local
+apps/**/.agents
+
+*.log
