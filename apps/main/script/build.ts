@@ -38,7 +38,7 @@ async function buildAll() {
   const projectRoot = path.resolve(import.meta.dirname, "..");
   const repoRoot = path.resolve(projectRoot, "..", "..");
   const cvRoot = path.resolve(repoRoot, "apps", "cv-site");
-  const legacyRoot = path.resolve(repoRoot, "apps", "legacy-links-site");
+  const legacyRoot = path.resolve(repoRoot, "apps", "legacy_rewored");
 
   await rm("dist", { recursive: true, force: true });
 
@@ -65,7 +65,7 @@ async function buildAll() {
 
   await stat(path.join(legacyRoot, "package.json")).catch(() => {
     throw new Error(
-      `Could not find the legacy Vite project at ${legacyRoot}. Expected it inside apps/legacy-links-site.`,
+      `Could not find the legacy Vite project at ${legacyRoot}. Expected it inside apps/legacy_rewored.`,
     );
   });
 

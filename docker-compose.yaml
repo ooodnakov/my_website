@@ -2,7 +2,7 @@ services:
   linksweb:
     build:
       context: .
-      dockerfile: ./apps/future-media-hub/Dockerfile
+      dockerfile: ./apps/main/Dockerfile
     container_name: linksweb
     hostname: linksweb
     environment:

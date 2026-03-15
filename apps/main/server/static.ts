@@ -14,8 +14,8 @@ function legacyFileCandidates(fileName: string) {
     "..",
     "..",
     "..",
-    "legacy-links-site",
-    "website",
+    "legacy_rewored",
+    "legacy_old",
     "files",
   );
 

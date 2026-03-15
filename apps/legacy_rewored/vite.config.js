@@ -3,7 +3,7 @@ import path from "node:path";
 import { defineConfig } from "vite";
 
 const projectRoot = path.resolve(__dirname);
-const archiveDir = path.resolve(projectRoot, "website");
+const archiveDir = path.resolve(projectRoot, "legacy_old");
 const outDir = path.resolve(projectRoot, "dist");
 
 async function rewriteFile(relativePath, transform) {
