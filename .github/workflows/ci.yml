@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main-typecheck
+            node-version: 22
+            working-directory: apps/main
+            lockfile: apps/main/package-lock.json
+            install-all: false
+            command: npm run check
+          - name: cv-lint
+            node-version: 22
+            working-directory: apps/cv-site
+            lockfile: apps/cv-site/package-lock.json
+            install-all: false
+            command: npm run lint
+          - name: cv-test
+            node-version: 22
+            working-directory: apps/cv-site
+            lockfile: apps/cv-site/package-lock.json
+            install-all: false
+            command: npm test
+          - name: legacy-build
+            node-version: 22
+            working-directory: apps/legacy_rewored
+            lockfile: apps/legacy_rewored/package-lock.json
+            install-all: false
+            command: npm run build
+          - name: unified-build
+            node-version: 22
+            working-directory: .
+            lockfile: |
+              apps/main/package-lock.json
+              apps/cv-site/package-lock.json
+              apps/legacy_rewored/package-lock.json
+            install-all: true
+            command: npm run build
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.lockfile }}
+
+      - name: Install dependencies
+        if: ${{ !matrix.install-all }}
+        working-directory: ${{ matrix.working-directory }}
+        run: npm ci
+
+      - name: Install all app dependencies
+        if: ${{ matrix.install-all }}
+        run: |
+          npm ci --prefix apps/main
+          npm ci --prefix apps/cv-site
+          npm ci --prefix apps/legacy_rewored
+
+      - name: Run ${{ matrix.name }}
+        working-directory: ${{ matrix.working-directory }}
+        run: ${{ matrix.command }}

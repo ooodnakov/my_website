@@ -2,6 +2,8 @@ node_modules/
 dist/
 .DS_Store
 *.log
+.eslintcache
+coverage/
 
 apps/**/node_modules/
 apps/**/dist/

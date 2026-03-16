@@ -1,0 +1,13 @@
+{
+  "name": "unified-site",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix apps/main",
+    "build:cv": "npm run build --prefix apps/cv-site",
+    "build:legacy": "npm run build --prefix apps/legacy_rewored",
+    "check": "npm run check --prefix apps/main",
+    "lint": "npm run lint --prefix apps/cv-site",
+    "test": "npm test --prefix apps/cv-site",
+    "validate": "npm run check && npm run lint && npm run test && npm run build"
+  }
+}
