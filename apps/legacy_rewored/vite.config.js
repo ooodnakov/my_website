@@ -87,7 +87,18 @@ export default defineConfig({
               'https://main.dnakov.ooo/projects"',
               'https://dnakov.ooo/legacy/archive/projects/"',
             )
-            .replaceAll("https://main.dnakov.ooo/projects/files/", "./files/"),
+            .replaceAll("https://main.dnakov.ooo/projects/files/", "./files/")
+            .replaceAll("https://dnakov.ooo/projects/files/", "./files/"),
+        );
+
+        await rewriteFile(path.join("archive", "projects", "style.css"), (content) =>
+          content
+            .replaceAll("https://main.dnakov.ooo/projects/img/", "./img/")
+            .replaceAll("https://dnakov.ooo/projects/img/", "./img/")
+            .replaceAll(
+              'url("./img/clouds.webp") center bottom / 100% no-repeat, ',
+              "",
+            ),
         );
 
         await rewriteFile(path.join("archive", "video", "index.html"), (content) =>
