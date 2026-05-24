@@ -1,3 +1,4 @@
+import { TransientPrompt } from "../ui/Prompt";
 import { ContentLine } from "@/data/home";
 
 type LineType = "border" | "file" | "content" | "default";
@@ -11,7 +12,8 @@ interface TerminalBlockProps {
 export function TerminalBlock({ title, children, className = "" }: TerminalBlockProps) {
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      <p className="text-[#b8bb26] text-sm mb-1 break-words">{title}</p>
+      {title && <TransientPrompt command={title.replace("❯ ", "")} />}
+      {!title && <br/>}
       <div className="font-mono text-sm whitespace-pre overflow-x-auto">
         {children}
       </div>

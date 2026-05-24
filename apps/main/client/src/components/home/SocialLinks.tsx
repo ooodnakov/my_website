@@ -1,3 +1,4 @@
+import { TransientPrompt } from "../ui/Prompt";
 import { SocialLink } from "@/data/home";
 
 interface SocialLinksProps {
@@ -14,7 +15,7 @@ export function SocialLinks({ links, prompt = "❯ sf ~/.config/social.toml", cl
 
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      <p className="text-[#b8bb26] text-sm mb-2 break-all">{prompt}</p>
+      <TransientPrompt command={prompt.replace("❯ ", "")} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
           {row1.map((link) => (
