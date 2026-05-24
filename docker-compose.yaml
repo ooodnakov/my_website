@@ -1,10 +1,10 @@
 services:
-  linksweb:
+  website:
     build:
       context: .
       dockerfile: ./apps/main/Dockerfile
-    container_name: linksweb
-    hostname: linksweb
+    container_name: website
+    hostname: website
     environment:
       TZ: "UTC"
       NODE_ENV: "production"

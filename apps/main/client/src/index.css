@@ -1,59 +1,113 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* ─── Meslo Nerd Font ─── */
+@font-face {
+  font-family: 'Meslo Nerd Font Mono';
+  src: url('/fonts/MesloLGSDZNerdFontMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Meslo Nerd Font Mono';
+  src: url('/fonts/MesloLGSDZNerdFontMono-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Meslo Nerd Font Mono';
+  src: url('/fonts/MesloLGSDZNerdFontMono-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Meslo Nerd Font Mono';
+  src: url('/fonts/MesloLGSDZNerdFontMono-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
+/* ─── Gruvbox Terminal Theme ─── */
 @theme inline {
-  --font-sans: 'Space Grotesk', sans-serif;
-  --font-display: 'Orbitron', sans-serif;
+  --font-sans: 'Meslo Nerd Font Mono', monospace;
+  --font-mono: 'Meslo Nerd Font Mono', monospace;
+  --font-display: 'Meslo Nerd Font Mono', monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  /* Gruvbox palette */
+  --color-bg:           #282828;
+  --color-bg-soft:     #32302f;
+  --color-bg-highlight:#3c3836;
+  --color-fg:          #ebdbb2;
+  --color-fg-muted:    #a89984;
+  --color-fg-dim:      #928374;
+  
+  /* Accent colors */
+  --color-red:          #fb4934;
+  --color-green:       #b8bb26;
+  --color-yellow:      #fabd2f;
+  --color-blue:        #83a598;
+  --color-purple:      #d3869b;
+  --color-aqua:        #8ec07c;
+  --color-orange:      #fe8019;
+  --color-gray:        #928374;
+  
+  /* Semantic tokens (using gruvbox) */
+  --color-background:  var(--color-bg);
+  --color-foreground: var(--color-fg);
+  --color-card:       var(--color-bg-soft);
+  --color-card-foreground: var(--color-fg);
+  --color-popover:    var(--color-bg-soft);
+  --color-popover-foreground: var(--color-fg);
+  --color-primary:    var(--color-orange);
+  --color-primary-foreground: var(--color-bg);
+  --color-secondary:  var(--color-bg-highlight);
+  --color-secondary-foreground: var(--color-fg);
+  --color-muted:      var(--color-bg-highlight);
+  --color-muted-foreground: var(--color-fg-dim);
+  --color-accent:     var(--color-yellow);
+  --color-accent-foreground: var(--color-bg);
+  --color-destructive: var(--color-red);
+  --color-destructive-foreground: var(--color-fg);
+  --color-border:     var(--color-fg-dim);
+  --color-input:      var(--color-bg-highlight);
+  --color-ring:       var(--color-orange);
+  --color-signal:     var(--color-green);
+  --color-signal-alt: var(--color-red);
+  --radius: 0.5rem;
 }
 
 :root {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 6%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 10% 6%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 180 100% 50%;
-  --primary-foreground: 240 10% 4%;
-  --secondary: 240 10% 12%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 10% 15%;
-  --muted-foreground: 240 5% 65%;
-  --accent: 280 100% 70%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 10% 20%;
-  --input: 240 10% 20%;
-  --ring: 180 100% 50%;
-  --radius: 0.75rem;
+  --background: 0 0% 15%;
+  --foreground: 45 30% 88%;
+  --card: 0 0% 20%;
+  --card-foreground: 45 30% 88%;
+  --popover: 0 0% 18%;
+  --popover-foreground: 45 30% 88%;
+  --primary: 25 95% 53%;
+  --primary-foreground: 0 0% 15%;
+  --secondary: 20 6% 22%;
+  --secondary-foreground: 45 30% 88%;
+  --muted: 20 6% 24%;
+  --muted-foreground: 30 5% 55%;
+  --accent: 50 95% 53%;
+  --accent-foreground: 0 0% 15%;
+  --destructive: 9 86% 58%;
+  --destructive-foreground: 45 30% 88%;
+  --border: 30 5% 50%;
+  --input: 20 6% 24%;
+  --ring: 25 95% 53%;
+  --radius: 0.5rem;
 }
 
 html {
@@ -64,162 +118,337 @@ html {
   * {
     @apply border-border;
   }
+  
   body {
-    @apply font-sans antialiased bg-background text-foreground;
-    background-image: 
-      radial-gradient(circle at 15% 50%, rgba(0, 255, 255, 0.08), transparent 25%),
-      radial-gradient(circle at 85% 30%, rgba(200, 0, 255, 0.08), transparent 25%);
-    background-attachment: fixed;
+    @apply font-mono antialiased bg-background text-foreground;
+    background-image: none;
     min-height: 100vh;
+    position: relative;
   }
   
+  /* Terminal scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9999;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.03) 0px,
+      rgba(0, 0, 0, 0.03) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+  }
+  
+  /* Subtle CRT glow on edges */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9998;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 0%,
+      transparent 60%,
+      rgba(40, 40, 40, 0.4) 100%
+    );
+  }
+
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Orbitron', sans-serif;
-    letter-spacing: 0.05em;
+    @apply font-mono;
+    letter-spacing: 0.02em;
   }
 
   section[id] {
-    scroll-margin-top: 6rem;
+    scroll-margin-top: 5rem;
   }
 }
 
-/* Custom glass panel styles */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+/* ─── Terminal Panel Styles ─── */
+.terminal-panel {
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-fg-dim);
+  box-shadow: 
+    inset 0 1px 0 rgba(235, 219, 178, 0.05),
+    4px 4px 0 rgba(0, 0, 0, 0.3);
+  position: relative;
 }
 
-.glass-panel-interactive {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
-  transition: all 300ms ease;
+.terminal-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, 
+    transparent 0%, 
+    var(--color-fg-dim) 20%, 
+    var(--color-fg-dim) 80%, 
+    transparent 100%
+  );
+  opacity: 0.3;
 }
 
-.glass-panel-interactive:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(0, 255, 255, 0.5);
-  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+.terminal-panel-interactive {
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-fg-dim);
+  box-shadow: 
+    inset 0 1px 0 rgba(235, 219, 178, 0.05),
+    4px 4px 0 rgba(0, 0, 0, 0.3);
+  transition: all 150ms ease;
 }
 
-.neon-text {
-  text-shadow: 0 0 10px rgba(0, 255, 255, 0.5), 0 0 20px rgba(0, 255, 255, 0.3);
+.terminal-panel-interactive:hover {
+  border-color: var(--color-orange);
+  box-shadow: 
+    inset 0 1px 0 rgba(235, 219, 178, 0.1),
+    4px 4px 0 rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(254, 128, 25, 0.15);
 }
 
-.neon-border {
-  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2), inset 0 0 10px rgba(0, 255, 255, 0.2);
+/* ─── Terminal Text Styles ─── */
+.terminal-prompt {
+  font-family: var(--font-mono);
+  color: var(--color-green);
 }
 
-/* Animations */
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+.terminal-prompt-path {
+  color: var(--color-blue);
+}
+
+.terminal-prompt-user {
+  color: var(--color-green);
+}
+
+.terminal-prompt-host {
+  color: var(--color-aqua);
+}
+
+.terminal-prompt-separator {
+  color: var(--color-fg-dim);
+}
+
+.terminal-prompt-cmd {
+  color: var(--color-fg);
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.2em;
+  background: var(--color-yellow);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ─── Segment Blocks (Powerline style) ─── */
+.segment {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15em 0.5em;
+  font-weight: 500;
+}
+
+.segment-green {
+  background: var(--color-green);
+  color: var(--color-bg);
+}
+
+.segment-blue {
+  background: var(--color-blue);
+  color: var(--color-bg);
+}
+
+.segment-yellow {
+  background: var(--color-yellow);
+  color: var(--color-bg);
+}
+
+.segment-orange {
+  background: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.segment-purple {
+  background: var(--color-purple);
+  color: var(--color-bg);
+}
+
+.segment-red {
+  background: var(--color-red);
+  color: var(--color-bg);
+}
+
+.segment-aqua {
+  background: var(--color-aqua);
+  color: var(--color-bg);
+}
+
+/* ─── Block Border Characters ─── */
+.block-border {
+  position: relative;
+}
+
+.block-border::before {
+  content: '▓';
+  position: absolute;
+  left: -1.2em;
+  color: var(--color-fg-dim);
+  opacity: 0.5;
+}
+
+/* ─── Git Status Blocks ─── */
+.git-branch {
+  color: var(--color-purple);
+}
+
+.git-add {
+  color: var(--color-green);
+}
+
+.git-remove {
+  color: var(--color-red);
+}
+
+.git-modify {
+  color: var(--color-yellow);
+}
+
+.git-clean {
+  color: var(--color-fg-dim);
+}
+
+/* ─── Status Indicators ─── */
+.status-ok {
+  color: var(--color-green);
+}
+
+.status-warn {
+  color: var(--color-yellow);
+}
+
+.status-error {
+  color: var(--color-red);
+}
+
+/* ─── Language Switcher Terminal Style ─── */
+.lang-switcher {
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  border: 1px solid var(--color-fg-dim);
+  padding: 2px;
+  gap: 0;
+}
+
+.lang-switcher button {
+  padding: 0.25em 0.75em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  transition: all 100ms ease;
+}
+
+.lang-switcher button.active {
+  background: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.lang-switcher button:not(.active) {
+  color: var(--color-fg-dim);
+}
+
+.lang-switcher button:not(.active):hover {
+  color: var(--color-fg);
+  background: var(--color-bg-highlight);
+}
+
+/* ─── Social Grid ─── */
+.social-icon {
+  background: var(--color-bg-highlight);
+  border: 1px solid var(--color-fg-dim);
+  color: var(--color-fg-dim);
+  transition: all 150ms ease;
+}
+
+.social-icon:hover {
+  background: var(--color-orange);
+  border-color: var(--color-orange);
+  color: var(--color-bg);
+  transform: translateY(-2px);
+}
+
+/* ─── Quick Links ─── */
+.quick-link {
+  background: var(--color-bg-highlight);
+  border: 1px solid var(--color-fg-dim);
+  color: var(--color-fg);
+  transition: all 150ms ease;
+}
+
+.quick-link:hover {
+  border-color: var(--color-orange);
+  transform: translateY(-1px);
+}
+
+.quick-link-primary {
+  background: var(--color-orange);
+  border-color: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.quick-link-primary:hover {
+  background: var(--color-yellow);
+  border-color: var(--color-yellow);
+  color: var(--color-bg);
+}
+
+/* ─── Animations ─── */
+@keyframes float-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
 
 .animate-float {
-  animation: float 6s ease-in-out infinite;
+  animation: float-subtle 8s ease-in-out infinite;
 }
 
-@keyframes pulse-slow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.8; }
-}
-
-.animate-pulse-slow {
-  animation: pulse-slow 4s ease-in-out infinite;
-}
-
-/* Starfield animations */
-@keyframes twinkle {
+@keyframes glow-pulse {
   0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
-@keyframes star-fall {
-  0% {
-    transform: translateY(-100vh) translateX(0);
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-  }
-  90% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(100vh) translateX(100px);
-    opacity: 0;
-  }
-}
-
-/* Create stars in the background */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: -1;
-  background-image:
-    radial-gradient(2px 2px at 20px 30px, rgba(0, 255, 255, 0.8), rgba(0, 255, 255, 0)),
-    radial-gradient(2px 2px at 60px 70px, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0)),
-    radial-gradient(1px 1px at 50px 50px, rgba(255, 255, 200, 0.9), rgba(255, 255, 200, 0)),
-    radial-gradient(1px 1px at 130px 80px, rgba(200, 150, 255, 0.8), rgba(200, 150, 255, 0)),
-    radial-gradient(2px 2px at 90px 10px, rgba(0, 255, 150, 0.7), rgba(0, 255, 150, 0)),
-    radial-gradient(1px 1px at 130px 130px, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0)),
-    radial-gradient(1px 1px at 10px 90px, rgba(100, 200, 255, 0.8), rgba(100, 200, 255, 0)),
-    radial-gradient(2px 2px at 140px 60px, rgba(255, 200, 100, 0.7), rgba(255, 200, 100, 0)),
-    radial-gradient(1px 1px at 40px 130px, rgba(0, 255, 255, 0.8), rgba(0, 255, 255, 0)),
-    radial-gradient(1px 1px at 130px 10px, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0));
-  background-size: 200% 200%;
-  background-position: 0 0;
-  background-repeat: repeat;
-  animation: twinkle 8s ease-in-out infinite;
-}
-
-/* Animated stars using pseudo-elements */
-body::after {
-  content: '';
-  position: fixed;
-  top: -100%;
-  left: 0;
-  width: 100%;
-  height: 200%;
-  pointer-events: none;
-  z-index: -1;
-  background-image:
-    radial-gradient(1px 1px at 15% 25%, rgba(0, 255, 255, 1), transparent),
-    radial-gradient(1px 1px at 45% 15%, rgba(255, 255, 255, 1), transparent),
-    radial-gradient(1px 1px at 70% 35%, rgba(200, 100, 255, 1), transparent),
-    radial-gradient(1px 1px at 25% 65%, rgba(255, 200, 100, 1), transparent),
-    radial-gradient(1px 1px at 85% 75%, rgba(100, 255, 200, 1), transparent),
-    radial-gradient(1px 1px at 35% 85%, rgba(255, 150, 200, 1), transparent),
-    radial-gradient(1px 1px at 60% 45%, rgba(0, 200, 255, 1), transparent),
-    radial-gradient(1px 1px at 10% 50%, rgba(255, 255, 150, 1), transparent),
-    radial-gradient(1px 1px at 75% 10%, rgba(100, 200, 255, 1), transparent),
-    radial-gradient(1px 1px at 50% 75%, rgba(200, 255, 100, 1), transparent),
-    radial-gradient(1px 1px at 20% 35%, rgba(255, 100, 200, 1), transparent),
-    radial-gradient(1px 1px at 90% 55%, rgba(100, 100, 255, 1), transparent);
-  background-size: 100% 100%;
-  background-repeat: no-repeat;
-  animation: twinkle 6s ease-in-out infinite alternate, star-fall 20s linear infinite;
+.animate-glow {
+  animation: glow-pulse 4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
-
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  .terminal-cursor {
+    animation: none;
+    opacity: 1;
   }
 }
