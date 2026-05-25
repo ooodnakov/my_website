@@ -1,3 +1,4 @@
+import { TransientPrompt } from "../ui/Prompt";
 import { QuickLink } from "@/data/home";
 
 interface QuickLinksProps {
@@ -9,7 +10,7 @@ interface QuickLinksProps {
 export function QuickLinks({ links, prompt = "❯ sf quicklinks.toml", className = "" }: QuickLinksProps) {
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      <p className="text-[#b8bb26] text-sm mb-1 break-all">{prompt}</p>
+      <TransientPrompt command={prompt.replace("❯ ", "")} />
       <div className="flex flex-wrap gap-2">
         {links.map((link) => (
           <a
