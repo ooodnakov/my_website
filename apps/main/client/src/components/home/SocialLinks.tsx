@@ -16,7 +16,7 @@ export function SocialLinks({ links, prompt = "❯ sf ~/.config/social.toml", cl
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
       <TransientPrompt command={prompt.replace("❯ ", "")} />
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 mt-2">
         <div className="flex flex-wrap gap-2">
           {row1.map((link) => (
             <a
@@ -24,7 +24,7 @@ export function SocialLinks({ links, prompt = "❯ sf ~/.config/social.toml", cl
               href={link.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828]"
+              className="inline-flex items-center gap-1.5 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828] transition-colors duration-150 border border-transparent hover:border-[#fe8019]"
             >
               <span className="text-[#83a598]">{link.icon}</span>
               {link.name}
@@ -39,7 +39,7 @@ export function SocialLinks({ links, prompt = "❯ sf ~/.config/social.toml", cl
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828]"
+                className="inline-flex items-center gap-1.5 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828] transition-colors duration-150 border border-transparent hover:border-[#fe8019]"
               >
                 <span className="text-[#83a598]">{link.icon}</span>
                 {link.name}

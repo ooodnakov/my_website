@@ -14,7 +14,7 @@ export function TerminalBlock({ title, children, className = "" }: TerminalBlock
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
       {title && <TransientPrompt command={title.replace("❯ ", "")} />}
       {!title && <br/>}
-      <div className="font-mono text-sm whitespace-pre overflow-x-auto">
+      <div className="font-mono text-sm whitespace-pre overflow-x-auto mt-2 p-3 bg-[#32302f] rounded border border-[#3c3836] shadow-sm">
         {children}
       </div>
     </section>
@@ -73,7 +73,7 @@ export function LinkOutput({ items, textColor = "text-[#83a598]" }: LinkOutputPr
             href={item.url}
             target={item.external ? "_blank" : undefined}
             rel={item.external ? "noopener noreferrer" : undefined}
-            className="hover:text-[#fe8019]"
+            className="hover:text-[#fe8019] hover:underline transition-colors"
           >
             {item.name}
           </a>
@@ -92,9 +92,9 @@ export function CtaButton({ label, url }: CtaButtonProps) {
   return (
     <a
       href={url}
-      className="mt-2 inline-flex items-center gap-1 rounded bg-[#fe8019] px-2 py-0.5 text-[#282828] hover:bg-[#fabd2f] text-sm"
+      className="mt-3 inline-flex items-center gap-1.5 rounded bg-[#fe8019] px-3 py-1 text-[#282828] hover:bg-[#fabd2f] text-sm font-semibold transition-colors duration-150 shadow-sm"
     >
-      <span>❯</span> {label}
+      <span className="opacity-70">❯</span> {label}
     </a>
   );
 }

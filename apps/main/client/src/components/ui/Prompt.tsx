@@ -57,7 +57,7 @@ export function FullPrompt({ command, isTyping, onTypingComplete }: { command?: 
         <span className="text-[#6c6c6c]">╰─</span>
         <span className="text-[#5fdf00] ml-1">❯ </span>
         <span className="text-[#ebdbb2] ml-1">{typedCommand}</span>
-        {(!command || isTyping) && <span className="animate-pulse w-2 h-4 bg-[#ebdbb2] ml-1 inline-block"></span>}
+        {(!command || isTyping) && <span className="animate-pulse w-[8px] h-[15px] bg-[#ebdbb2] ml-[1px] inline-block align-text-bottom"></span>}
       </div>
     </div>
   );

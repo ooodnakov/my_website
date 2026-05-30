@@ -16,6 +16,29 @@ export default function Home({ lang }: HomeProps) {
   const [step, setStep] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const totalSteps = page.sections.length + 1; // 1 for Hero, plus sections
+  const mainRef = useRef<HTMLElement>(null);
+
+  // Auto-advance logic
+  useEffect(() => {
+    if (!isTyping && step < totalSteps) {
+      // Start typing next command automatically after a short delay
+      const timer = setTimeout(() => {
+        setIsTyping(true);
+      }, 500); // Wait 500ms before starting to type next command
+      return () => clearTimeout(timer);
+    }
+  }, [step, isTyping, totalSteps]);
+
+  // Auto scroll to bottom
+  useEffect(() => {
+    if (mainRef.current) {
+        window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: "smooth"
+        });
+    }
+  }, [step, isTyping]);
+
 
   const copyPageLink = async () => {
     try {
@@ -36,23 +59,21 @@ export default function Home({ lang }: HomeProps) {
   };
 
   const handleClick = () => {
-    if (step >= totalSteps || isTyping) return;
-    setIsTyping(true);
-  };
-
-  const handleTypingComplete = () => {
-    setIsTyping(false);
-    setStep(s => s + 1);
+    // Allow skipping the entire animation by clicking
+    if (step < totalSteps) {
+      setStep(totalSteps);
+      setIsTyping(false);
+    }
   };
 
   return (
     <div
-      className="min-h-screen bg-[#282828] px-4 py-6 sm:px-8 sm:py-8 font-mono text-sm"
+      className="min-h-screen bg-[#282828] px-4 py-6 sm:px-8 sm:py-8 font-mono text-sm selection:bg-[#fe8019] selection:text-[#282828]"
       onClick={handleClick}
     >
       <Header lang={lang} nextLang={nextLang} copyPageLink={copyPageLink} />
 
-      <main className="mx-auto max-w-3xl cursor-default">
+      <main ref={mainRef} className="mx-auto max-w-3xl cursor-default pb-12">
         {step > 0 && (
           <Hero title={page.hero.title} desc={page.hero.desc} />
         )}
@@ -65,19 +86,28 @@ export default function Home({ lang }: HomeProps) {
           <FullPrompt
             command={getCommandForStep(step)}
             isTyping={isTyping}
-            onTypingComplete={handleTypingComplete}
+            onTypingComplete={() => {
+                setIsTyping(false);
+                setStep(s => s + 1);
+            }}
           />
         )}
 
         {step >= totalSteps && (
           <>
             <FullPrompt />
-            <div className="mt-8">
+            <div className="mt-8 animate-in fade-in duration-500">
               <Footer />
             </div>
           </>
         )}
       </main>
+
+      {step < totalSteps && (
+        <div className="fixed bottom-4 right-4 text-[#928374] text-xs opacity-50 animate-pulse">
+            Click anywhere to skip animation...
+        </div>
+      )}
     </div>
   );
 }

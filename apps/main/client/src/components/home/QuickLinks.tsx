@@ -11,14 +11,14 @@ export function QuickLinks({ links, prompt = "❯ sf quicklinks.toml", className
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
       <TransientPrompt command={prompt.replace("❯ ", "")} />
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 mt-2">
         {links.map((link) => (
           <a
             key={link.name}
             href={link.url}
             target={link.external ? "_blank" : undefined}
             rel={link.external ? "noopener noreferrer" : undefined}
-            className="inline-flex items-center gap-1 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828] text-sm"
+            className="inline-flex items-center gap-1.5 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#b8bb26] hover:text-[#282828] text-sm transition-colors duration-150 border border-transparent hover:border-[#b8bb26]"
             title={link.title}
           >
             <span className="text-[#fe8019]">{link.icon}</span>
