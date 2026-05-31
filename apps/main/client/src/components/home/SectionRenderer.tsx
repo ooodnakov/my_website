@@ -16,9 +16,9 @@ interface SectionRendererProps {
 export function SectionRenderer({ section }: SectionRendererProps) {
   switch (section.type) {
     case "social":
-      return <SocialLinks links={section.data} prompt="❯ sf ~/.config/social.toml" className="text-sm" />;
+      return <SocialLinks links={section.data} prompt="❯ eza -la --icons --color=always socials/" className="text-sm" />;
     case "quickLinks":
-      return <QuickLinks links={section.data} prompt="❯ sf quicklinks.toml" className="text-sm" />;
+      return <QuickLinks links={section.data} prompt="❯ eza -la --icons --color=always quicklinks/" className="text-sm" />;
     case "about":
       return (
         <TerminalBlock title={section.title || ""} className="text-sm">

@@ -53,8 +53,8 @@ export default function Home({ lang }: HomeProps) {
     if (idx === 0) return page.hero.title.replace("❯ ", "");
     const section = page.sections[idx - 1];
     if (section.title) return section.title.replace("❯ ", "");
-    if (section.type === "social") return "sf ~/.config/social.toml";
-    if (section.type === "quickLinks") return "sf quicklinks.toml";
+    if (section.type === "social") return "eza -la --icons --color=always socials/";
+    if (section.type === "quickLinks") return "eza -la --icons --color=always quicklinks/";
     return "echo 'hello'";
   };
 

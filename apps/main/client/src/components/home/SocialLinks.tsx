@@ -1,5 +1,6 @@
 import { TransientPrompt } from "../ui/Prompt";
 import { SocialLink } from "@/data/home";
+import { EzaRow } from "./EzaRow";
 
 interface SocialLinksProps {
   links: SocialLink[];
@@ -7,46 +8,39 @@ interface SocialLinksProps {
   className?: string;
 }
 
-export function SocialLinks({ links, prompt = "❯ sf ~/.config/social.toml", className = "" }: SocialLinksProps) {
-  // Split evenly: first row gets ceil(n/2), second gets floor(n/2)
-  const half = Math.ceil(links.length / 2);
-  const row1 = links.slice(0, half);
-  const row2 = links.slice(half);
+export function SocialLinks({ links, prompt = "❯ eza -la --icons --color=always socials/", className = "" }: SocialLinksProps) {
+  // Generate some realistic-looking file metadata for socials
+  const today = new Date();
+  const day = today.getDate().toString().padStart(2, '0');
+  const month = today.toLocaleString('en-US', { month: 'short' });
+  const year = today.getFullYear();
 
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
       <TransientPrompt command={prompt.replace("❯ ", "")} />
-      <div className="flex flex-col gap-2 mt-2">
-        <div className="flex flex-wrap gap-2">
-          {row1.map((link) => (
-            <a
-              key={link.name}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828] transition-colors duration-150 border border-transparent hover:border-[#fe8019]"
-            >
-              <span className="text-[#83a598]">{link.icon}</span>
-              {link.name}
-            </a>
-          ))}
-        </div>
-        {row2.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {row2.map((link) => (
-              <a
+      <div className="font-mono text-sm overflow-x-auto mt-2 p-3 bg-[#32302f] rounded border border-[#3c3836] shadow-sm">
+        <div className="flex flex-col min-w-max">
+          {links.map((link, i) => {
+            // Fake varying sizes
+            const sizeStr = `${(1.2 + i * 0.3).toFixed(1)}k`;
+            const dateStr = `${day} ${month}  ${year}`;
+
+            return (
+              <EzaRow
                 key={link.name}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded bg-[#3c3836] px-3 py-1 text-[#ebdbb2] hover:bg-[#fe8019] hover:text-[#282828] transition-colors duration-150 border border-transparent hover:border-[#fe8019]"
-              >
-                <span className="text-[#83a598]">{link.icon}</span>
-                {link.name}
-              </a>
-            ))}
-          </div>
-        )}
+                permissions="lrwxrwxrwx"
+                size="-"
+                user="rem"
+                date={dateStr}
+                icon={link.icon}
+                name={`${link.name.toLowerCase()}.url`}
+                target={link.url}
+                url={link.url}
+                external={true}
+              />
+            );
+          })}
+        </div>
       </div>
     </section>
   );
