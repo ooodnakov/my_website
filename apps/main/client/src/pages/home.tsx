@@ -73,7 +73,7 @@ export default function Home({ lang }: HomeProps) {
     >
       <Header lang={lang} nextLang={nextLang} copyPageLink={copyPageLink} />
 
-      <main ref={mainRef} className="mx-auto max-w-3xl cursor-default pb-12">
+      <main ref={mainRef} className="mx-auto max-w-[54rem] cursor-default pb-12">
         {step > 0 && (
           <Hero title={page.hero.title} desc={page.hero.desc} />
         )}

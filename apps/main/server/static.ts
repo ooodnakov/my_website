@@ -1,19 +1,18 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const serverDir = typeof __dirname !== "undefined" ? __dirname : path.resolve(process.cwd(), "server");
 
 function resolveFirstExistingPath(paths: string[]) {
   return paths.find((candidate) => fs.existsSync(candidate));
 }
 
 function legacyFileCandidates(fileName: string) {
-  const publicPath = path.resolve(__dirname, "public");
+  const publicPath = path.resolve(serverDir, "public");
   const legacyDistPath = path.resolve(publicPath, "legacy");
   const legacySourcePath = path.resolve(
-    __dirname,
+    serverDir,
     "..",
     "..",
     "..",
@@ -59,7 +58,7 @@ export function registerLegacyFileRoutes(app: Express) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+  const distPath = path.resolve(serverDir, "public");
   const cvDistPath = path.resolve(distPath, "cv");
   const legacyDistPath = path.resolve(distPath, "legacy");
 

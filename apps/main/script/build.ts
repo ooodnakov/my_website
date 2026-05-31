@@ -52,7 +52,7 @@ async function buildAll() {
   });
 
   console.log("building cv...");
-  execFileSync("npm", ["run", "build", "--", "--base=/cv/", "--outDir=dist"], {
+  execFileSync("pnpm", ["exec", "vite", "build", "--base=/cv/", "--outDir=dist"], {
     cwd: cvRoot,
     stdio: "inherit",
     env: process.env,
@@ -70,7 +70,7 @@ async function buildAll() {
   });
 
   console.log("building legacy...");
-  execFileSync("npm", ["run", "build"], {
+  execFileSync("pnpm", ["run", "build"], {
     cwd: legacyRoot,
     stdio: "inherit",
     env: process.env,

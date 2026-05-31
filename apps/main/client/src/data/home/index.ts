@@ -55,17 +55,17 @@ export interface PageContent {
 }
 
 const socials: SocialLink[] = [
-  { name: "Discord", icon: "", url: "https://discord.com/users/oouser" },
-  { name: "Reddit", icon: "", url: "https://www.reddit.com/user/OOOdnakov/" },
-  { name: "X", icon: "", url: "https://x.com/oouser" },
-  { name: "Twitch", icon: "", url: "https://twitch.tv/oouser" },
+  { name: "Discord", icon: "", url: "https://discord.com/users/ooodnakov" },
+  { name: "Reddit", icon: "", url: "https://www.reddit.com/user/ooodnakov/" },
+  { name: "X", icon: "", url: "https://x.com/ooodnakov" },
+  { name: "Twitch", icon: "", url: "https://twitch.tv/ooodnakov" },
   { name: "YT", icon: "", url: "https://youtube.com/TheCoolkaOS1" },
-  { name: "IG", icon: "", url: "https://www.instagram.com/oouser" },
-  { name: "TG", icon: "", url: "https://t.me/oouser" },
-  { name: "Mastodon", icon: "", url: "https://mastodon.social/@oouser" },
-  { name: "LI", icon: "", url: "https://www.linkedin.com/in/oouser/" },
-  { name: "GH", icon: "", url: "https://github.com/OOOdnakov" },
-  { name: "TT", icon: "󰎇", url: "https://www.tiktok.com/@oouser" },
+  { name: "IG", icon: "", url: "https://www.instagram.com/ooodnakov" },
+  { name: "TG", icon: "", url: "https://t.me/ooodnakov" },
+  { name: "Mastodon", icon: "", url: "https://mastodon.social/@ooodnakov" },
+  { name: "LI", icon: "", url: "https://www.linkedin.com/in/ooodnakov/" },
+  { name: "GH", icon: "", url: "https://github.com/ooodnakov" },
+  { name: "TT", icon: "󰎇", url: "https://www.tiktok.com/@ooodnakov" },
 ];
 
 export const homeContent: Record<Language, PageContent> = {
@@ -87,7 +87,7 @@ export const homeContent: Record<Language, PageContent> = {
           { icon: "", name: "PDF RU", url: "/cv-pdf/ru", title: "CV PDF Russian" },
           { icon: "", name: "Archive", url: "/legacy/", title: "Legacy archive" },
           { icon: "", name: "vCard", url: "/vcard/828869858", title: "vCard" },
-          { icon: "", name: "Mail", url: "mailto:oouser@yandex.ru", external: true, title: "Email" },
+          { icon: "", name: "Mail", url: "mailto:ooodnakov@yandex.ru", external: true, title: "Email" },
         ]
       },
       {
@@ -166,7 +166,7 @@ export const homeContent: Record<Language, PageContent> = {
           { icon: "", name: "PDF RU", url: "/cv-pdf/ru", title: "CV PDF Russian" },
           { icon: "", name: "Архив", url: "/legacy/", title: "Легаси архив" },
           { icon: "", name: "vCard", url: "/vcard/828869858", title: "vCard" },
-          { icon: "", name: "Почта", url: "mailto:oouser@yandex.ru", external: true, title: "Почта" },
+          { icon: "", name: "Почта", url: "mailto:ooodnakov@yandex.ru", external: true, title: "Почта" },
         ]
       },
       {
