@@ -1,6 +1,9 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveFirstExistingPath(paths: string[]) {
   return paths.find((candidate) => fs.existsSync(candidate));
