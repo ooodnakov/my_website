@@ -173,6 +173,285 @@ html {
   }
 }
 
+/* ─── Terminal Panel Styles ─── */
+.terminal-panel {
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-fg-dim);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 219, 178, 0.05),
+    4px 4px 0 rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+.terminal-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--color-fg-dim) 20%,
+    var(--color-fg-dim) 80%,
+    transparent 100%
+  );
+  opacity: 0.3;
+}
+
+.terminal-panel-interactive {
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-fg-dim);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 219, 178, 0.05),
+    4px 4px 0 rgba(0, 0, 0, 0.3);
+  transition: all 150ms ease;
+}
+
+.terminal-panel-interactive:hover {
+  border-color: var(--color-orange);
+  box-shadow:
+    inset 0 1px 0 rgba(235, 219, 178, 0.1),
+    4px 4px 0 rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(254, 128, 25, 0.15);
+}
+
+/* ─── Terminal Text Styles ─── */
+.terminal-prompt {
+  font-family: var(--font-mono);
+  color: var(--color-green);
+}
+
+.terminal-prompt-path {
+  color: var(--color-blue);
+}
+
+.terminal-prompt-user {
+  color: var(--color-green);
+}
+
+.terminal-prompt-host {
+  color: var(--color-aqua);
+}
+
+.terminal-prompt-separator {
+  color: var(--color-fg-dim);
+}
+
+.terminal-prompt-cmd {
+  color: var(--color-fg);
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.2em;
+  background: var(--color-yellow);
+  animation: blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ─── Segment Blocks (Powerline style) ─── */
+.segment {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15em 0.5em;
+  font-weight: 500;
+}
+
+.segment-green {
+  background: var(--color-green);
+  color: var(--color-bg);
+}
+
+.segment-blue {
+  background: var(--color-blue);
+  color: var(--color-bg);
+}
+
+.segment-yellow {
+  background: var(--color-yellow);
+  color: var(--color-bg);
+}
+
+.segment-orange {
+  background: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.segment-purple {
+  background: var(--color-purple);
+  color: var(--color-bg);
+}
+
+.segment-red {
+  background: var(--color-red);
+  color: var(--color-bg);
+}
+
+.segment-aqua {
+  background: var(--color-aqua);
+  color: var(--color-bg);
+}
+
+/* ─── Block Border Characters ─── */
+.block-border {
+  position: relative;
+}
+
+.block-border::before {
+  content: '▓';
+  position: absolute;
+  left: -1.2em;
+  color: var(--color-fg-dim);
+  opacity: 0.5;
+}
+
+/* ─── Git Status Blocks ─── */
+.git-branch {
+  color: var(--color-purple);
+}
+
+.git-add {
+  color: var(--color-green);
+}
+
+.git-remove {
+  color: var(--color-red);
+}
+
+.git-modify {
+  color: var(--color-yellow);
+}
+
+.git-clean {
+  color: var(--color-fg-dim);
+}
+
+/* ─── Status Indicators ─── */
+.status-ok {
+  color: var(--color-green);
+}
+
+.status-warn {
+  color: var(--color-yellow);
+}
+
+.status-error {
+  color: var(--color-red);
+}
+
+/* ─── Language Switcher Terminal Style ─── */
+.lang-switcher {
+  font-family: var(--font-mono);
+  background: var(--color-bg);
+  border: 1px solid var(--color-fg-dim);
+  padding: 2px;
+  gap: 0;
+}
+
+.lang-switcher button {
+  padding: 0.25em 0.75em;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  transition: all 100ms ease;
+}
+
+.lang-switcher button.active {
+  background: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.lang-switcher button:not(.active) {
+  color: var(--color-fg-dim);
+}
+
+.lang-switcher button:not(.active):hover {
+  color: var(--color-fg);
+  background: var(--color-bg-highlight);
+}
+
+/* ─── Social Grid ─── */
+.social-icon {
+  background: var(--color-bg-highlight);
+  border: 1px solid var(--color-fg-dim);
+  color: var(--color-fg-dim);
+  transition: all 150ms ease;
+}
+
+.social-icon:hover {
+  background: var(--color-orange);
+  border-color: var(--color-orange);
+  color: var(--color-bg);
+  transform: translateY(-2px);
+}
+
+/* ─── Quick Links ─── */
+.quick-link {
+  background: var(--color-bg-highlight);
+  border: 1px solid var(--color-fg-dim);
+  color: var(--color-fg);
+  transition: all 150ms ease;
+}
+
+.quick-link:hover {
+  border-color: var(--color-orange);
+  transform: translateY(-1px);
+}
+
+.quick-link-primary {
+  background: var(--color-orange);
+  border-color: var(--color-orange);
+  color: var(--color-bg);
+}
+
+.quick-link-primary:hover {
+  background: var(--color-yellow);
+  border-color: var(--color-yellow);
+  color: var(--color-bg);
+}
+
+/* ─── Animations ─── */
+@keyframes float-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.animate-float {
+  animation: float-subtle 8s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+
+.animate-glow {
+  animation: glow-pulse 4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .terminal-cursor {
+    animation: none;
+    opacity: 1;
+  }
+}
 /* ─── Cursor Pulse Animation ─── */
 .animate-pulse {
   animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;

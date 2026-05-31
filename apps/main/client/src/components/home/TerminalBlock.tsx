@@ -14,7 +14,7 @@ export function TerminalBlock({ title, children, className = "" }: TerminalBlock
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
       {title && <TransientPrompt command={title.replace("❯ ", "")} />}
       {!title && <br/>}
-      <div className="font-mono text-sm whitespace-pre overflow-x-auto mt-2 p-3 bg-[#32302f] rounded border border-[#3c3836] shadow-sm">
+      <div className="font-mono text-sm whitespace-pre overflow-x-auto mt-2 p-3 bg-transparent">
         {children}
       </div>
     </section>
