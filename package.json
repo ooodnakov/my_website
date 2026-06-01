@@ -2,12 +2,12 @@
   "name": "unified-site",
   "private": true,
   "scripts": {
-    "build": "pnpm --dir apps/main build",
-    "build:cv": "pnpm --dir apps/cv-site build",
-    "build:legacy": "pnpm --dir apps/legacy_rewored build",
-    "check": "pnpm --dir apps/main check",
-    "lint": "pnpm --dir apps/cv-site lint",
-    "test": "pnpm --dir apps/cv-site test",
-    "validate": "pnpm check && pnpm lint && pnpm test && pnpm build"
+    "build": "npm run --prefix apps/main build",
+    "build:cv": "npm run --prefix apps/cv-site build",
+    "build:legacy": "npm run --prefix apps/legacy_rewored build",
+    "check": "npm run --prefix apps/main check",
+    "lint": "npm run --prefix apps/cv-site lint",
+    "test": "npm run --prefix apps/cv-site test",
+    "validate": "npm run check && npm run lint && npm run test && npm run build"
   }
 }
