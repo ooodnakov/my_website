@@ -56,11 +56,14 @@ export function FullPrompt({ command, isTyping, onTypingComplete }: { command?: 
           <span className="text-[#6c6c6c]"> ─╮</span>
         </div>
       </div>
-      <div className="flex items-center">
-        <span className="text-[#6c6c6c]">╰─</span>
-        <span className="text-[#5fdf00] ml-1">❯ </span>
-        <span className="text-[#ebdbb2] ml-1">{typedCommand}</span>
-        {(!command || isTyping) && <span className="animate-pulse w-[8px] h-[15px] bg-[#ebdbb2] ml-[1px] inline-block align-text-bottom"></span>}
+      <div className="flex w-full justify-between items-center">
+        <div className="flex items-center">
+          <span className="text-[#6c6c6c]">╰─</span>
+          <span className="text-[#5fdf00] ml-1">❯ </span>
+          <span className="text-[#ebdbb2] ml-1">{typedCommand}</span>
+          {(!command || isTyping) && <span className="animate-pulse w-[8px] h-[15px] bg-[#ebdbb2] ml-[1px] inline-block align-text-bottom"></span>}
+        </div>
+        <div className="flex items-center text-[#6c6c6c]"> ─╯</div>
       </div>
     </div>
   );
@@ -93,10 +96,13 @@ export function TransientPrompt({ command }: { command: string }) {
           <span className="text-[#6c6c6c]"> ─╮</span>
         </div>
       </div>
-      <div className="flex items-center">
-        <span className="text-[#6c6c6c]">╰─</span>
-        <span className="text-[#5fdf00] ml-1">❯ </span>
-        <span className="text-[#ebdbb2] ml-1">{command}</span>
+      <div className="flex w-full justify-between items-center">
+        <div className="flex items-center">
+          <span className="text-[#6c6c6c]">╰─</span>
+          <span className="text-[#5fdf00] ml-1">❯ </span>
+          <span className="text-[#ebdbb2] ml-1">{command}</span>
+        </div>
+        <div className="flex items-center text-[#6c6c6c]"> ─╯</div>
       </div>
     </div>
   );

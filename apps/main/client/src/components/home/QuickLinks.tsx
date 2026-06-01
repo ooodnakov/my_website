@@ -24,7 +24,7 @@ export function QuickLinks({ links, prompt = "❯ eza -la --icons --color=always
             const isDir = link.url.endsWith('/');
             const perms = isDir ? "drwxr-xr-x" : "-rw-r--r--";
             const sizeStr = isDir ? "-" : `${(4.5 + i * 1.1).toFixed(1)}k`;
-            const dateStr = `${day} ${month}  ${year}`;
+            const dateStr = `${day} ${month} ${year} `;
 
             return (
               <EzaRow

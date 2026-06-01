@@ -192,9 +192,9 @@ export const homeContent: Record<Language, PageContent> = {
         title: "❯ eza -la projects/",
         data: {
           items: [
-            { name: "drwxr-xr-x    12  user   12 Окт  2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true },
-            { name: "-rw-r--r--  1.2k  user    9 Сен  2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true },
-            { name: "-rwxr-xr-x     1  user    1 Янв  2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true },
+            { name: "drwxr-xr-x    12  user   12 Окт 2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true },
+            { name: "-rw-r--r--  1.2k  user    9 Сен 2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true },
+            { name: "-rwxr-xr-x     1  user    1 Янв 2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true },
             { name: "-rw-r--r--   512  user   30 Авг 2016  articles", url: "https://vk.com/wall-168427103_141", external: true },
           ]
         }

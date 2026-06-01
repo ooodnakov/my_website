@@ -31,7 +31,7 @@ export function EzaRow({ permissions, size, user, date, icon, name, url, target,
       <div className="w-[10ch]">{colorizePerms(permissions)}</div>
       <div className="w-[6ch] text-right text-[#b8bb26]">{size}</div>
       <div className="w-[3ch] text-[#fabd2f]">{user}</div>
-      <div className="w-[11ch] text-[#83a598]">{date}</div>
+      <div className="w-[12ch] text-[#83a598]">{date}</div>
       <div className="flex-grow flex items-center gap-2">
         <span className="text-[#83a598] opacity-80">{icon}</span>
         <a
