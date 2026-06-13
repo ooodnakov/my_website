@@ -92,7 +92,8 @@ export default function Home({ lang }: HomeProps) {
                 </div>
             </div>
         )
-    } else if (cmd === "ls" || cmd === "eza") {
+
+    } else if (cmd === "eza" || cmd === "eza -la") {
          output = (
             <div className="mb-4">
                 <TransientPrompt command={cmd} timestamp={timestamp} />
@@ -107,6 +108,22 @@ export default function Home({ lang }: HomeProps) {
                 </div>
             </div>
         )
+    } else if (cmd === "ls" || cmd === "ls -la") {
+         output = (
+            <div className="mb-4">
+                <TransientPrompt command={cmd} timestamp={timestamp} />
+                <div className="font-mono text-sm mt-2 p-3 text-[#ebdbb2] flex gap-4">
+                    <span>index.txt</span>
+                    <span>README.md</span>
+                    <span>socials/</span>
+                    <span>quicklinks/</span>
+                    <span>projects/</span>
+                    <span>cv.txt</span>
+                    <span>archive/</span>
+                </div>
+            </div>
+        )
+
     } else if (cmd.startsWith("cat ")) {
          output = (
             <div className="mb-4">
