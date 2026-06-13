@@ -6,9 +6,10 @@ interface SocialLinksProps {
   links: SocialLink[];
   prompt?: string;
   className?: string;
+  timestamp?: string;
 }
 
-export function SocialLinks({ links, prompt = "❯ eza -la --icons --color=always socials/", className = "" }: SocialLinksProps) {
+export function SocialLinks({ links, prompt = "❯ eza -la --icons --color=always socials/", className = "", timestamp }: SocialLinksProps) {
   // Generate some realistic-looking file metadata for socials
   const today = new Date();
   const day = today.getDate().toString().padStart(2, '0');
@@ -17,7 +18,7 @@ export function SocialLinks({ links, prompt = "❯ eza -la --icons --color=alway
 
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      <TransientPrompt command={prompt.replace("❯ ", "")} />
+      <TransientPrompt command={prompt.replace("❯ ", "")} timestamp={timestamp} />
       <div className="font-mono text-sm overflow-x-auto mt-2 p-3 bg-transparent">
         <div className="flex flex-col min-w-max">
           {links.map((link, i) => {

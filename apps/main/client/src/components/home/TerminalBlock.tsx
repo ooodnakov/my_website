@@ -7,12 +7,13 @@ interface TerminalBlockProps {
   title: string;
   children?: React.ReactNode;
   className?: string;
+  timestamp?: string;
 }
 
-export function TerminalBlock({ title, children, className = "" }: TerminalBlockProps) {
+export function TerminalBlock({ title, children, className = "", timestamp }: TerminalBlockProps) {
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      {title && <TransientPrompt command={title.replace("❯ ", "")} />}
+      {title && <TransientPrompt command={title.replace("❯ ", "")} timestamp={timestamp} />}
       {!title && <br/>}
       <div className="font-mono text-sm whitespace-pre overflow-x-auto mt-2 p-3 bg-transparent">
         {children}
