@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
-export function FullPrompt({ command, isTyping, onTypingComplete }: { command?: string, isTyping?: boolean, onTypingComplete?: () => void }) {
+export function FullPrompt({ command, isTyping, onTypingComplete, timestamp }: { command?: string, isTyping?: boolean, onTypingComplete?: () => void, timestamp?: string }) {
   const [typedCommand, setTypedCommand] = useState("");
 
   useEffect(() => {
@@ -26,7 +26,7 @@ export function FullPrompt({ command, isTyping, onTypingComplete }: { command?: 
     }
   }, [isTyping, command, onTypingComplete]);
 
-  const timeString = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const timeString = timestamp || new Date().toLocaleTimeString('en-US', { hour12: false });
 
   // Use line-height 1 to merge the block characters.
   // Let's use `border-dashed` to make it look like dots, but align it correctly via relative positioning.
@@ -66,8 +66,8 @@ export function FullPrompt({ command, isTyping, onTypingComplete }: { command?: 
   );
 }
 
-export function TransientPrompt({ command }: { command: string }) {
-  const timeString = new Date().toLocaleTimeString('en-US', { hour12: false });
+export function TransientPrompt({ command, timestamp }: { command: string; timestamp?: string }) {
+  const timeString = timestamp || new Date().toLocaleTimeString('en-US', { hour12: false });
   return (
     <div className="font-mono text-sm my-2 flex flex-col w-full opacity-80" style={{ lineHeight: "1" }}>
       <div className="flex w-full justify-between items-center whitespace-nowrap overflow-hidden">
@@ -97,6 +97,108 @@ export function TransientPrompt({ command }: { command: string }) {
         <span className="text-[#6c6c6c]">╰─</span>
         <span className="text-[#5fdf00] ml-1">❯ </span>
         <span className="text-[#ebdbb2] ml-1">{command}</span>
+      </div>
+    </div>
+  );
+}
+
+interface InteractivePromptProps {
+  onCommand: (command: string) => void;
+  history: string[];
+  suggestions: string[];
+}
+
+export function InteractivePrompt({ onCommand, history, suggestions, timestamp }: InteractivePromptProps & { timestamp?: string }) {
+  const [input, setInput] = useState("");
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const timeString = timestamp || new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  // Auto-focus the input when it renders or user clicks anywhere in the main container
+  useEffect(() => {
+    const focusInput = () => {
+      if (inputRef.current) {
+         inputRef.current.focus();
+      }
+    };
+    focusInput();
+    window.addEventListener("click", focusInput);
+    return () => window.removeEventListener("click", focusInput);
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      if (input.trim()) {
+        onCommand(input.trim());
+        setInput("");
+        setHistoryIndex(-1);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (history.length > 0) {
+        const newIndex = historyIndex < history.length - 1 ? historyIndex + 1 : historyIndex;
+        setHistoryIndex(newIndex);
+        setInput(history[history.length - 1 - newIndex]);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        const newIndex = historyIndex - 1;
+        setHistoryIndex(newIndex);
+        setInput(history[history.length - 1 - newIndex]);
+      } else if (historyIndex === 0) {
+        setHistoryIndex(-1);
+        setInput("");
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (!input) return;
+      const match = suggestions.find(s => s.startsWith(input));
+      if (match) {
+        setInput(match);
+      }
+    }
+  };
+
+  return (
+    <div className="font-mono text-sm mt-4 mb-2 flex flex-col w-full" style={{ lineHeight: "1" }}>
+      <div className="flex w-full justify-between items-center whitespace-nowrap overflow-hidden">
+        <div className="flex items-center">
+          <span className="text-[#6c6c6c]">╭─</span>
+          <span className="bg-[#444444] text-[#eeeeee] px-1 h-full flex items-center">  </span>
+          <span className="bg-[#444444] text-[#0087af] h-full flex items-center">│  ~/src/main </span>
+          <span className="bg-[#444444] text-[#5fdf00] h-full flex items-center">│ main </span>
+          <span className="text-[#444444] bg-transparent flex items-center"></span>
+        </div>
+
+        <div className="flex-grow flex items-center px-1">
+           <div className="h-[1px] w-full border-t border-dashed border-[#6c6c6c]/50 relative top-[-1px]"></div>
+        </div>
+
+        <div className="flex items-center">
+          <span className="text-[#444444] bg-transparent flex items-center"></span>
+          <span className="bg-[#444444] text-[#5faf00] h-full flex items-center">  </span>
+          <span className="bg-[#444444] text-[#a8a8a8] h-full flex items-center">│ 12ms </span>
+          <span className="bg-[#444444] text-[#dfaf00] h-full flex items-center">│ ▼ </span>
+          <span className="bg-[#444444] text-[#00afaf] h-full flex items-center">│  main </span>
+          <span className="bg-[#444444] text-[#5f8787] h-full flex items-center">│ at {timeString}  </span>
+          <span className="text-[#6c6c6c]"> ─╮</span>
+        </div>
+      </div>
+      <div className="flex items-center w-full">
+        <span className="text-[#6c6c6c]">╰─</span>
+        <span className="text-[#5fdf00] ml-1">❯ </span>
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="ml-1 bg-transparent text-[#ebdbb2] outline-none border-none flex-grow"
+          autoFocus
+          spellCheck="false"
+          autoComplete="off"
+        />
       </div>
     </div>
   );

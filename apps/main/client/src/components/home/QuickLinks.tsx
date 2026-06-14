@@ -6,9 +6,10 @@ interface QuickLinksProps {
   links: QuickLink[];
   prompt?: string;
   className?: string;
+  timestamp?: string;
 }
 
-export function QuickLinks({ links, prompt = "❯ eza -la --icons --color=always quicklinks/", className = "" }: QuickLinksProps) {
+export function QuickLinks({ links, prompt = "❯ eza -la --icons --color=always quicklinks/", className = "", timestamp }: QuickLinksProps) {
   // Generate some realistic-looking file metadata
   const today = new Date();
   const day = today.getDate().toString().padStart(2, '0');
@@ -17,7 +18,7 @@ export function QuickLinks({ links, prompt = "❯ eza -la --icons --color=always
 
   return (
     <section className={`mb-4 border-b border-[#928374]/30 pb-4 ${className}`}>
-      <TransientPrompt command={prompt.replace("❯ ", "")} />
+      <TransientPrompt command={prompt.replace("❯ ", "")} timestamp={timestamp} />
       <div className="font-mono text-sm overflow-x-auto mt-2 p-3 bg-transparent">
          <div className="flex flex-col min-w-max">
           {links.map((link, i) => {
