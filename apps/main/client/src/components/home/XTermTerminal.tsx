@@ -89,7 +89,7 @@ export function XTermTerminal({ lang }: XTermTerminalProps) {
 
   return (
     <div
-      className="w-full h-[600px] rounded-lg overflow-hidden border border-[#928374]/30 shadow-2xl bg-[#282828]"
+      className="w-full h-[600px] overflow-hidden bg-[#282828]"
       style={{ padding: '12px' }}
     >
       <div ref={terminalRef} className="w-full h-full" />

@@ -48,10 +48,18 @@ export class Shell {
     this.term.onKey(({ key, domEvent }) => {
       if (this.isProcessing) return;
 
-      const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey;
+      // Handle Ctrl+C
+      if (domEvent.ctrlKey && domEvent.key.toLowerCase() === "c") {
+        this.term.write("^C\r\n");
+        this.currentInput = "";
+        this.prompt();
+        return;
+      }
+
+      const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1;
 
       // Handle Enter
-      if (domEvent.keyCode === 13) {
+      if (domEvent.key === "Enter") {
         this.term.write("\r\n");
         this.handleCommand(this.currentInput.trim());
 
@@ -63,14 +71,14 @@ export class Shell {
 
       }
       // Handle Backspace
-      else if (domEvent.keyCode === 8) {
+      else if (domEvent.key === "Backspace") {
         if (this.currentInput.length > 0) {
           this.currentInput = this.currentInput.slice(0, -1);
           this.term.write("\b \b");
         }
       }
       // Handle Up Arrow (History)
-      else if (domEvent.keyCode === 38) {
+      else if (domEvent.key === "ArrowUp") {
         if (this.historyIndex > 0) {
            // Clear current input from screen
            while (this.currentInput.length > 0) {
@@ -84,7 +92,7 @@ export class Shell {
         }
       }
       // Handle Down Arrow (History)
-      else if (domEvent.keyCode === 40) {
+      else if (domEvent.key === "ArrowDown") {
         if (this.historyIndex < this.history.length - 1) {
             // Clear current input from screen
            while (this.currentInput.length > 0) {
@@ -183,11 +191,14 @@ export class Shell {
         case "bat":
           const catTarget = args[1];
           if (!catTarget) {
-            this.term.writeln(`\x1b[31mcat: missing file operand\x1b[0m`);
+            this.term.writeln("\x1b[31mcat: missing file operand\x1b[0m");
           } else {
              const content = this.vfs.readFile(catTarget);
-             // Replace actual newlines with terminal newlines
-             this.term.writeln(content.replace(/\n/g, "\r\n"));
+             if (content.startsWith("cat:")) {
+                this.term.writeln("\x1b[31m" + content + "\x1b[0m");
+             } else {
+                this.term.writeln(content.replace(/\n/g, "\r\n"));
+             }
           }
           break;
 

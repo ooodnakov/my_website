@@ -107,8 +107,8 @@ export class VirtualFileSystem {
     const archiveSection = content.sections.find((s) => s.type === "archive");
     if (archiveSection && archiveSection.data && archiveSection.data.items) {
          (archiveSection.data.items as ArchiveItem[]).forEach((item) => {
-            const name = item.name.replace("archive/", "").replace("/", "");
-            addNode(archiveDir, `${name}.txt`, { type: "file", content: `URL: ${item.url}`});
+            const name = item.name.split("/").filter(Boolean).pop() || "item";
+            addNode(archiveDir, name + ".txt", { type: "file", content: "URL: " + item.url });
          });
     }
 
