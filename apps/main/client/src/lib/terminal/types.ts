@@ -1,0 +1,48 @@
+import type { VirtualFileSystem } from "../vfs";
+
+export interface ParsedCommand {
+  raw: string;
+  command: string;
+  args: string[];
+  tokens: string[];
+}
+
+export interface CommandResult {
+  lines?: string[];
+  clear?: boolean;
+  prompt?: boolean;
+  openUrl?: string;
+  exitCode?: number;
+}
+
+export interface ShellState {
+  history: string[];
+  user: string;
+  host: string;
+  branch: string;
+}
+
+export interface CommandContext {
+  raw: string;
+  args: string[];
+  vfs: VirtualFileSystem;
+  state: ShellState;
+  registry: CommandRegistry;
+}
+
+export interface CommandDefinition {
+  name: string;
+  aliases?: string[];
+  category: "filesystem" | "text" | "session" | "portfolio" | "system";
+  summary: string;
+  usage: string;
+  examples?: string[];
+  description?: string;
+  execute: (context: CommandContext) => CommandResult;
+}
+
+export interface CommandRegistry {
+  all: () => CommandDefinition[];
+  get: (name: string) => CommandDefinition | undefined;
+  names: () => string[];
+}

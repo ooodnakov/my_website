@@ -8,6 +8,8 @@
     "check": "pnpm --dir apps/main check",
     "lint": "pnpm --dir apps/cv-site lint",
     "test": "pnpm --dir apps/cv-site test",
-    "validate": "pnpm check && pnpm lint && pnpm test && pnpm build"
+    "validate": "pnpm check && pnpm lint && pnpm test && pnpm build",
+    "docker:build": "docker build -f apps/main/Dockerfile -t unified-site .",
+    "docker:preflight": "corepack pnpm@10.18.3 --dir apps/main install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/cv-site install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/legacy_rewored install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/main build"
   }
 }
