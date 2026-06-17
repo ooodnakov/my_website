@@ -65,7 +65,11 @@ const definitions: CommandDefinition[] = [
     if (typeof walked === "string") return { lines: [red(walked)] };
     const root = ctx.vfs.stat(start);
     const rootPath = root?.path ?? "/";
-    return { lines: walked.map((s) => `${"  ".repeat(Math.max(0, s.path.replace(rootPath, "").split("/").filter(Boolean).length))}${s.type === "dir" ? blue(`${s.name}/`) : s.name}`) };
+    return { lines: walked.map((s) => {
+      const depth = Math.max(0, s.path.replace(rootPath, "").split("/").filter(Boolean).length);
+      const name = s.name === "/" ? "/" : s.type === "dir" ? `${s.name}/` : s.name;
+      return `${"  ".repeat(depth)}${s.type === "dir" ? blue(name) : name}`;
+    }) };
   } },
   { name: "find", aliases: ["fd"], category: "filesystem", summary: "Find virtual files by name", usage: "find [dir] [pattern]", examples: ["find / txt"], execute: (ctx) => {
     const dir = ctx.args[0] && !ctx.args[0].startsWith("-") ? ctx.args[0] : "/";
@@ -81,19 +85,21 @@ const definitions: CommandDefinition[] = [
   } },
   { name: "head", category: "text", summary: "Print first lines of a file", usage: "head [-n N] <file>", execute: (ctx) => {
     const nIndex = ctx.args.indexOf("-n");
-    const n = nIndex >= 0 ? Number(ctx.args[nIndex + 1] ?? 10) : 10;
-    const file = ctx.args.find((arg, i) => arg !== "-n" && i !== nIndex + 1 && !/^\d+$/.test(arg));
+    const parsedN = nIndex >= 0 ? Number(ctx.args[nIndex + 1]) : 10;
+    const n = Number.isNaN(parsedN) ? 10 : Math.max(0, parsedN);
+    const file = ctx.args.find((arg, i) => nIndex >= 0 ? arg !== "-n" && i !== nIndex + 1 : true);
     if (!file) return { lines: [red("head: missing file operand")] };
     const out = lines(ctx, file);
     return { lines: typeof out === "string" ? [red(out)] : out.slice(0, n) };
   } },
   { name: "tail", category: "text", summary: "Print last lines of a file", usage: "tail [-n N] <file>", execute: (ctx) => {
     const nIndex = ctx.args.indexOf("-n");
-    const n = nIndex >= 0 ? Number(ctx.args[nIndex + 1] ?? 10) : 10;
-    const file = ctx.args.find((arg, i) => arg !== "-n" && i !== nIndex + 1 && !/^\d+$/.test(arg));
+    const parsedN = nIndex >= 0 ? Number(ctx.args[nIndex + 1]) : 10;
+    const n = Number.isNaN(parsedN) ? 10 : Math.max(0, parsedN);
+    const file = ctx.args.find((arg, i) => nIndex >= 0 ? arg !== "-n" && i !== nIndex + 1 : true);
     if (!file) return { lines: [red("tail: missing file operand")] };
     const out = lines(ctx, file);
-    return { lines: typeof out === "string" ? [red(out)] : out.slice(-n) };
+    return { lines: typeof out === "string" ? [red(out)] : n === 0 ? [] : out.slice(-n) };
   } },
   { name: "grep", category: "text", summary: "Search file text", usage: "grep <pattern> <file>", execute: (ctx) => {
     const [pattern, file] = ctx.args;
@@ -107,14 +113,19 @@ const definitions: CommandDefinition[] = [
     if (!file) return { lines: [red("wc: missing file operand")] };
     const content = text(ctx, file);
     if (content == null) return { lines: [red(`wc: ${file}: No such file or directory`)] };
-    return { lines: [`${content.split("\n").length} ${content.trim().split(/\s+/).filter(Boolean).length} ${content.length} ${file}`] };
+    const lineCount = (content.match(/\n/g) || []).length;
+    const wordCount = content.trim().split(/\s+/).filter(Boolean).length;
+    const byteCount = content.length;
+    return { lines: [`${lineCount} ${wordCount} ${byteCount} ${file}`] };
   } },
   { name: "sort", category: "text", summary: "Sort file lines", usage: "sort <file>", execute: (ctx) => {
-    const out = lines(ctx, ctx.args[0] ?? "");
+    if (!ctx.args[0]) return { lines: [red("sort: missing file operand")] };
+    const out = lines(ctx, ctx.args[0]);
     return { lines: typeof out === "string" ? [red(out)] : [...out].sort() };
   } },
   { name: "uniq", category: "text", summary: "Remove repeated adjacent lines", usage: "uniq <file>", execute: (ctx) => {
-    const out = lines(ctx, ctx.args[0] ?? "");
+    if (!ctx.args[0]) return { lines: [red("uniq: missing file operand")] };
+    const out = lines(ctx, ctx.args[0]);
     if (typeof out === "string") return { lines: [red(out)] };
     return { lines: out.filter((line, i) => i === 0 || line !== out[i - 1]) };
   } },
