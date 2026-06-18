@@ -19,9 +19,9 @@ export default function Home({ lang }: HomeProps) {
   const [isPaletteOpen, setPaletteOpen] = useState(false);
   const terminalRef = useRef<XTermTerminalHandle>(null);
   const paletteCopy = lang === "ru"
-    ? { button: "[палитра]", title: "Командная палитра", hint: "Быстрые команды и ссылки", close: "Закрыть" }
-    : { button: "[palette]", title: "Command palette", hint: "Fast commands and links", close: "Close" };
-  const paletteCommands = useMemo(() => ["tour", "links", "open cv.txt", "projects", "contact", "github"], []);
+    ? { button: "[палитра]", title: "Командная палитра", hint: "Быстрые команды и ссылки", close: "Закрыть", busy: "Терминал занят. Пожалуйста, подождите." }
+    : { button: "[palette]", title: "Command palette", hint: "Fast commands and links", close: "Close", busy: "Terminal is busy. Please wait." };
+  const paletteCommands = useMemo(() => ["tour", "plugins", "links", "open cv.txt", "projects", "contact", "github"], []);
 
   useEffect(() => {
     if (!isPaletteOpen) return;
@@ -35,6 +35,8 @@ export default function Home({ lang }: HomeProps) {
   const runPaletteCommand = (command: string) => {
     if (terminalRef.current?.runCommand(command)) {
       setPaletteOpen(false);
+    } else {
+      toast({ duration: 2000, variant: "destructive", title: paletteCopy.busy });
     }
   };
 
@@ -66,7 +68,7 @@ export default function Home({ lang }: HomeProps) {
               <div className="w-3 h-3 rounded-full bg-[#98971a]"></div>
             </div>
             <div className="text-[#a89984] text-xs font-semibold">
-              user@main:~
+              zsh · user@main:~
             </div>
             <div className="w-16"></div> {/* Spacer for centering */}
           </div>
@@ -124,7 +126,7 @@ export default function Home({ lang }: HomeProps) {
                     type="button"
                     onClick={() => runPaletteCommand(command)}
                     className="rounded border border-[#504945] bg-[#1d2021] px-3 py-2 text-left text-[#b8bb26] transition-colors hover:border-[#b8bb26] hover:text-[#ebdbb2] focus:outline-none focus:ring-2 focus:ring-[#b8bb26]"
-                    aria-label={`Run ${command} in terminal`}
+                    aria-label={lang === "ru" ? `Запустить ${command} в терминале` : `Run ${command} in terminal`}
                   >
                     <code>{command}</code>
                   </button>

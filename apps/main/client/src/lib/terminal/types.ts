@@ -21,6 +21,8 @@ export interface ShellState {
   user: string;
   host: string;
   branch: string;
+  shell: "zsh";
+  theme: "powerlevel10k";
 }
 
 export interface CommandContext {

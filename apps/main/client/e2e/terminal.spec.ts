@@ -15,6 +15,7 @@ test("shortcut strip and command palette expose primary navigation", async ({ pa
   await palette.getByRole("button", { name: /run tour in terminal/i }).click();
   await expect(palette).toBeHidden();
   await expect(page.locator(".xterm-screen")).toContainText("Tour");
+  await expect(page.locator(".xterm-screen")).toContainText("Oh My Zsh");
 });
 
 test("terminal accepts typing and exposes reverse-search prompt", async ({ page }) => {
@@ -27,4 +28,16 @@ test("terminal accepts typing and exposes reverse-search prompt", async ({ page 
   await page.keyboard.press("Control+R");
 
   await expect(page.locator(".xterm-screen")).toContainText("reverse-i-search");
+});
+
+test("terminal advertises zsh plugin behavior", async ({ page }) => {
+  await page.goto("/");
+
+  const terminal = page.locator(".xterm-helper-textarea");
+  await terminal.click();
+  await page.keyboard.type("plugins");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".xterm-screen")).toContainText("zsh runtime");
+  await expect(page.locator(".xterm-screen")).toContainText("autosuggestions");
 });

@@ -10,6 +10,7 @@ const copy = {
   en: {
     tour: [
       yellow("Tour"),
+      dim("Shell: zsh + Oh My Zsh + powerlevel10k-inspired prompt."),
       "1. about        Read the short homepage README",
       "2. links        Show primary CV, PDF, archive, vCard, and email links",
       "3. projects     Explore project files, then run open <project>.txt",
@@ -24,6 +25,7 @@ const copy = {
   ru: {
     tour: [
       yellow("Тур"),
+      dim("Shell: zsh + Oh My Zsh + prompt в стиле powerlevel10k."),
       "1. about        Короткий README главной страницы",
       "2. links        Главные ссылки: CV, PDF, архив, vCard, почта",
       "3. projects     Проекты; затем open <project>.txt",
@@ -79,6 +81,13 @@ const definitions: CommandDefinition[] = [
     return { lines: [yellow(`NAME`), `  ${cmd.name} - ${cmd.summary}`, yellow("SYNOPSIS"), `  ${cmd.usage}`, yellow("DESCRIPTION"), `  ${cmd.description ?? cmd.summary}`, ...(cmd.aliases?.length ? [yellow("ALIASES"), `  ${cmd.aliases.join(", ")}`] : []), ...(cmd.examples?.length ? [yellow("EXAMPLES"), ...cmd.examples.map((e) => `  ${e}`)] : [])] };
   } },
   { name: "clear", category: "session", summary: "Clear terminal screen", usage: "clear", execute: () => ({ clear: true }) },
+  { name: "plugins", aliases: ["omz", "zsh"], category: "session", summary: "Show enabled zsh-style plugins", usage: "plugins", execute: (ctx) => ({ lines: [
+    yellow("zsh runtime"),
+    `shell: ${ctx.state.shell}`,
+    `theme: ${ctx.state.theme}`,
+    "plugins: git, autosuggestions, syntax-highlighting, history-substring-search, fzf-tab, zoxide, eza",
+    dim("Aliases: ll/la -> eza-style ls, fd -> find, bat/less -> cat, gh -> github."),
+  ] }) },
   { name: "history", category: "session", summary: "Show command history", usage: "history", execute: (ctx) => ({ lines: ctx.state.history.map((h, i) => `${String(i + 1).padStart(4)}  ${h}`) }) },
   { name: "pwd", category: "filesystem", summary: "Print working directory", usage: "pwd", execute: (ctx) => ({ lines: [ctx.vfs.getPwd()] }) },
   { name: "cd", category: "filesystem", summary: "Change directory", usage: "cd [dir]", examples: ["cd projects", "cd .."], execute: (ctx) => {
