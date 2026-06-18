@@ -16,7 +16,7 @@ export class Shell {
   private reverseSearchQuery = "";
   private reverseSearchInitialInput = "";
   private isProcessing = false;
-  private state: ShellState = { history: [], user: "user", host: "main", branch: "main" };
+  private state: ShellState = { history: [], user: "user", host: "main", branch: "main", shell: "zsh", theme: "powerlevel10k" };
 
   constructor(term: Terminal, vfs: VirtualFileSystem) {
     this.term = term;
@@ -38,12 +38,14 @@ export class Shell {
     const isRu = this.vfs.lang === "ru";
     const lines = isRu
       ? [
-          "\x1b[1;32mДобро пожаловать в интерактивный terminal hub.\x1b[0m",
+          "\x1b[1;32mДобро пожаловать в интерактивный zsh terminal hub.\x1b[0m",
+          "\x1b[38;5;246mOh My Zsh: git, autosuggest, syntax highlighting, history-substring-search, fzf, zoxide, eza.\x1b[0m",
           "\x1b[38;5;246mБыстрый старт: tour, links, cv, projects, contact. Tab — автодополнение. Ctrl+R — поиск по истории.\x1b[0m",
           "\x1b[38;5;246mПодсказка: open cv.txt откроет интерактивное CV.\x1b[0m",
         ]
       : [
-          "\x1b[1;32mWelcome to the interactive terminal hub.\x1b[0m",
+          "\x1b[1;32mWelcome to the interactive zsh terminal hub.\x1b[0m",
+          "\x1b[38;5;246mOh My Zsh: git, autosuggest, syntax highlighting, history-substring-search, fzf, zoxide, eza.\x1b[0m",
           "\x1b[38;5;246mQuick start: tour, links, cv, projects, contact. Tab completes. Ctrl+R searches history.\x1b[0m",
           "\x1b[38;5;246mTip: open cv.txt opens the interactive CV.\x1b[0m",
         ];
@@ -73,11 +75,13 @@ export class Shell {
   }
 
   private promptText() {
+    const shell = `\x1b[38;5;220m${this.state.shell}\x1b[0m`;
     const userHost = `\x1b[1;36m${this.state.user}@${this.state.host}\x1b[0m`;
     const path = `\x1b[1;34m${this.vfs.getPwd()}\x1b[0m`;
-    const git = `\x1b[1;32m${this.state.branch}\x1b[0m`;
+    const git = `\x1b[1;32m ${this.state.branch}\x1b[0m`;
+    const plugins = `\x1b[38;5;246m[omz:p10k]\x1b[0m`;
     const symbol = `\x1b[1;32m❯\x1b[0m`;
-    return `${userHost}:${path} git:(${git}) ${symbol} `;
+    return `${shell} ${userHost} ${path} ${git} ${plugins} ${symbol} `;
   }
 
   private prompt() {
@@ -113,6 +117,9 @@ export class Shell {
 
   public submitCommand(input: string): boolean {
     if (this.isProcessing) return false;
+    if (this.reverseSearch) {
+      this.finishReverseSearch(false);
+    }
     const submitted = input.trim();
     this.setInput(submitted);
     this.term.write("\r\n");
