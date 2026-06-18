@@ -111,6 +111,18 @@ export class Shell {
     this.saveHistory();
   }
 
+  public submitCommand(input: string): boolean {
+    if (this.isProcessing) return false;
+    const submitted = input.trim();
+    this.setInput(submitted);
+    this.term.write("\r\n");
+    this.currentInput = "";
+    this.cursor = 0;
+    this.runCommand(submitted);
+    this.term.focus();
+    return true;
+  }
+
   private setupEventHandlers() {
     this.term.onKey(({ key, domEvent }) => {
       if (this.isProcessing) return;
