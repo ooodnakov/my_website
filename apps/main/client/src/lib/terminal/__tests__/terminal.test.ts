@@ -58,6 +58,12 @@ assert.equal((shell as any).currentInput, "projects");
 (shell as any).handleReverseSearchKey("", { key: "Escape", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
 assert.equal((shell as any).currentInput, "draft");
 (shell as any).startReverseSearch();
+(shell as any).handleReverseSearchKey("c", { key: "c", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
+assert.equal((shell as any).currentInput, "contact");
+(shell as any).handleReverseSearchKey("", { key: "ArrowLeft", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
+assert.equal((shell as any).reverseSearch, false);
+assert.equal((shell as any).currentInput, "contact");
+(shell as any).startReverseSearch();
 (shell as any).handleReverseSearchKey("", { key: "c", altKey: false, ctrlKey: true, metaKey: false } as KeyboardEvent);
 assert.equal((shell as any).currentInput, "");
 

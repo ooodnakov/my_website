@@ -23,7 +23,7 @@ test("terminal accepts typing and exposes reverse-search prompt", async ({ page 
   await terminal.click();
   await page.keyboard.type("about");
   await page.keyboard.press("Enter");
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+R" : "Control+R");
+  await page.keyboard.press("Control+R");
 
   await expect(page.locator(".xterm-screen")).toContainText("reverse-i-search");
 });

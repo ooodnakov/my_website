@@ -240,6 +240,12 @@ export class Shell {
       return;
     }
 
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(domEvent.key)) {
+      this.finishReverseSearch();
+      this.redrawInput();
+      return;
+    }
+
     if (domEvent.key === "Backspace") this.reverseSearchQuery = this.reverseSearchQuery.slice(0, -1);
     else if (!domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1) this.reverseSearchQuery += key;
     else return;
