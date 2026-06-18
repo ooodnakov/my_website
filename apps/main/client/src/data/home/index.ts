@@ -23,6 +23,9 @@ export interface ProjectItem {
   name: string;
   url: string;
   external?: boolean;
+  description?: string;
+  tech?: string;
+  year?: string;
 }
 
 export interface CvItem {
@@ -113,10 +116,10 @@ export const homeContent: Record<Language, PageContent> = {
         title: "❯ eza -la projects/",
         data: {
           items: [
-            { name: "drwxr-xr-x    12  user   12 Oct 2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true },
-            { name: "-rw-r--r--  1.2k  user    9 Sep 2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true },
-            { name: "-rwxr-xr-x     1  user    1 Jan 2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true },
-            { name: "-rw-r--r--   512  user   30 Aug 2016  articles", url: "https://vk.com/wall-168427103_141", external: true },
+            { name: "drwxr-xr-x    12  user   12 Oct 2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "video, documentation", description: "A cover/documentation experiment preserving a public creative artifact." },
+            { name: "-rw-r--r--  1.2k  user    9 Sep 2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, profile design", description: "A nostalgic web-profile experiment focused on personal expression and link curation." },
+            { name: "-rwxr-xr-x     1  user    1 Jan 2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, geometry", description: "An executable geometry construction that turns a mathematical lemma into an interactive artifact." },
+            { name: "-rw-r--r--   512  user   30 Aug 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "writing, archive", description: "Archived writing from an early public-project period." },
           ]
         }
       },
@@ -192,10 +195,10 @@ export const homeContent: Record<Language, PageContent> = {
         title: "❯ eza -la projects/",
         data: {
           items: [
-            { name: "drwxr-xr-x    12  user   12 Окт  2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true },
-            { name: "-rw-r--r--  1.2k  user    9 Сен  2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true },
-            { name: "-rwxr-xr-x     1  user    1 Янв  2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true },
-            { name: "-rw-r--r--   512  user   30 Авг 2016  articles", url: "https://vk.com/wall-168427103_141", external: true },
+            { name: "drwxr-xr-x    12  user   12 Окт  2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "видео, документация", description: "Эксперимент с обложкой/документацией, сохраняющий публичный творческий артефакт." },
+            { name: "-rw-r--r--  1.2k  user    9 Сен  2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, дизайн профиля", description: "Ностальгический эксперимент с веб-профилем, самопрезентацией и подборкой ссылок." },
+            { name: "-rwxr-xr-x     1  user    1 Янв  2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, геометрия", description: "Исполняемая геометрическая конструкция, превращающая лемму в интерактивный артефакт." },
+            { name: "-rw-r--r--   512  user   30 Авг 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "тексты, архив", description: "Архивные тексты раннего периода публичных проектов." },
           ]
         }
       },

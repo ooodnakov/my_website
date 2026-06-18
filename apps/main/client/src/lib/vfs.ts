@@ -41,9 +41,12 @@ export class VirtualFileSystem {
 
   setLang(lang: Language) {
     if (this.lang !== lang) {
+      const previousPath = this.getPwd();
       this.lang = lang;
       this.root = this.buildFileSystem(lang);
       this.cwd = this.root;
+      const preserved = this.resolvePath(previousPath);
+      if (preserved?.type === "dir") this.cwd = preserved;
     }
   }
 
@@ -66,7 +69,10 @@ export class VirtualFileSystem {
 
     const aboutSection = content.sections.find((s) => s.type === "about");
     const readmeContent = aboutSection?.data?.lines
-      ? aboutSection.data.lines.map((l: ContentLine) => l.line).join("\n")
+      ? aboutSection.data.lines
+          .filter((l: ContentLine) => l.type === "content")
+          .map((l: ContentLine) => l.line.replace(/^\s*\d+\s*│\s?/, "").trimEnd())
+          .join("\n")
       : "About me\n";
     this.addNode(root, "README.md", { type: "file", content: readmeContent, description: "About this homepage" });
 
@@ -76,6 +82,18 @@ export class VirtualFileSystem {
     this.addNode(root, "cv.txt", { type: "file", content: cvContent, description: "Short CV", url: cvSection?.data?.ctaUrl });
 
     this.addNode(root, "index.txt", { type: "file", content: `${content.hero.title}\n${content.hero.desc}`, description: "Landing page intro" });
+
+    const contactDir = this.addNode(root, "contact", { type: "dir", children: {}, description: "Best contact routes" });
+    const contactNames = new Set(["Mail", "Почта", "LI", "GH", "TG", "vCard"]);
+    const addContact = (name: string, title: string, url: string) => {
+      this.addNode(contactDir, `${name.toLowerCase().replace(/\s+/g, "_")}.txt`, {
+        type: "file",
+        content: `${title}\nURL: ${url}`,
+        description: title,
+        url,
+        executable: true,
+      });
+    };
 
     const socialsDir = this.addNode(root, "socials", { type: "dir", children: {}, description: "Social profiles" });
     const socialsSection = content.sections.find((s) => s.type === "social");
@@ -87,6 +105,7 @@ export class VirtualFileSystem {
           description: social.name,
           url: social.url,
         });
+        if (contactNames.has(social.name)) addContact(social.name, social.name, social.url);
       });
     }
 
@@ -102,6 +121,7 @@ export class VirtualFileSystem {
           url: link.url,
           executable: true,
         });
+        if (contactNames.has(link.name)) addContact(link.name, link.title, link.url);
       });
     }
 
@@ -113,7 +133,14 @@ export class VirtualFileSystem {
         if (rawName) {
           this.addNode(projectsDir, `${rawName}.txt`, {
             type: "file",
-            content: `${rawName}\nURL: ${project.url}`,
+            content: [
+              rawName,
+              project.year ? `Year: ${project.year}` : undefined,
+              project.tech ? `Tech: ${project.tech}` : undefined,
+              project.description ? `Why it matters: ${project.description}` : "Why it matters: shows long-running experiments and public artifacts.",
+              `URL: ${project.url}`,
+              `Try: open ${rawName}.txt`,
+            ].filter(Boolean).join("\n"),
             description: rawName,
             url: project.url,
             executable: true,

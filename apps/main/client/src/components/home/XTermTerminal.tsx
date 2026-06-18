@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import { VirtualFileSystem } from '@/lib/vfs';
 import { Shell } from '@/lib/shell';
 import { Language } from '@/data/home';
+import { terminalTheme } from '@/lib/terminal/theme';
 
 interface XTermTerminalProps {
   lang: Language;
@@ -26,27 +27,8 @@ export function XTermTerminal({ lang }: XTermTerminalProps) {
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 14,
-      theme: {
-        background: '#282828',
-        foreground: '#ebdbb2',
-        cursor: '#ebdbb2',
-        black: '#282828',
-        red: '#cc241d',
-        green: '#98971a',
-        yellow: '#d79921',
-        blue: '#458588',
-        magenta: '#b16286',
-        cyan: '#689d6a',
-        white: '#a89984',
-        brightBlack: '#928374',
-        brightRed: '#fb4934',
-        brightGreen: '#b8bb26',
-        brightYellow: '#fabd2f',
-        brightBlue: '#83a598',
-        brightMagenta: '#d3869b',
-        brightCyan: '#8ec07c',
-        brightWhite: '#ebdbb2',
-      },
+      theme: terminalTheme,
+
       convertEol: true,
     });
 
@@ -89,8 +71,9 @@ export function XTermTerminal({ lang }: XTermTerminalProps) {
 
   return (
     <div
-      className="w-full h-[600px] overflow-hidden bg-[#282828]"
+      className="w-full h-[min(70vh,720px)] min-h-[360px] overflow-hidden bg-[#282828]"
       style={{ padding: '12px' }}
+      onClick={() => termInstanceRef.current?.focus()}
     >
       <div ref={terminalRef} className="w-full h-full" />
     </div>

@@ -4,6 +4,38 @@ const green = (s: string) => `\x1b[1;32m${s}\x1b[0m`;
 const blue = (s: string) => `\x1b[1;34m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[1;33m${s}\x1b[0m`;
+const dim = (s: string) => `\x1b[38;5;246m${s}\x1b[0m`;
+
+const copy = {
+  en: {
+    tour: [
+      yellow("Tour"),
+      "1. about        Read the short homepage README",
+      "2. links        Show primary CV, PDF, archive, vCard, and email links",
+      "3. projects     Explore project files, then run open <project>.txt",
+      "4. cv           Show the compact CV summary",
+      "5. contact      Show best ways to reach me",
+      dim("Tip: Tab completes commands and paths. Ctrl+R searches command history."),
+    ],
+    start: ["Try: tour", "Try: links", "Try: open cv.txt", "Try: contact"],
+    contact: "Best contact routes",
+    openHint: (name: string) => dim(`  run: open ${name}`),
+  },
+  ru: {
+    tour: [
+      yellow("Тур"),
+      "1. about        Короткий README главной страницы",
+      "2. links        Главные ссылки: CV, PDF, архив, vCard, почта",
+      "3. projects     Проекты; затем open <project>.txt",
+      "4. cv           Краткое CV",
+      "5. contact      Контакты",
+      dim("Подсказка: Tab дополняет команды и пути. Ctrl+R ищет по истории."),
+    ],
+    start: ["Попробуй: tour", "Попробуй: links", "Попробуй: open cv.txt", "Попробуй: contact"],
+    contact: "Лучшие способы связи",
+    openHint: (name: string) => dim(`  команда: open ${name}`),
+  },
+};
 
 function text(ctx: CommandContext, path: string): string | null {
   const content = ctx.vfs.readFile(path);
@@ -21,11 +53,13 @@ function listNamed(ctx: CommandContext, path: string): string[] {
   if (typeof stats === "string") return [red(stats)];
   return stats.map((item) => {
     const label = item.type === "dir" ? blue(`${item.name}/`) : item.executable ? green(item.name) : item.name;
-    return item.url ? `${label} -> ${item.url}` : label;
+    return item.url ? `${label} -> ${item.url}\n${copy[ctx.lang].openHint(item.name)}` : label;
   });
 }
 
 const definitions: CommandDefinition[] = [
+  { name: "start", aliases: ["guide"], category: "session", summary: "Show quick-start suggestions", usage: "start", execute: (ctx) => ({ lines: copy[ctx.lang].start }) },
+  { name: "tour", category: "session", summary: "Take a guided portfolio tour", usage: "tour", examples: ["tour"], execute: (ctx) => ({ lines: copy[ctx.lang].tour }) },
   { name: "help", category: "session", summary: "Show available commands", usage: "help [command]", examples: ["help", "help grep"], execute: (ctx) => {
     const requested = ctx.args[0];
     if (requested) {
@@ -142,9 +176,14 @@ const definitions: CommandDefinition[] = [
     return { lines: [`Opening ${url}`], openUrl: url };
   } },
   { name: "about", category: "portfolio", summary: "Show README/about content", usage: "about", execute: (ctx) => ({ lines: [ctx.vfs.readFile("/README.md")] }) },
-  { name: "cv", category: "portfolio", summary: "Show CV summary", usage: "cv", execute: (ctx) => ({ lines: [ctx.vfs.readFile("/cv.txt")] }) },
+  { name: "cv", aliases: ["resume"], category: "portfolio", summary: "Show CV summary", usage: "cv", execute: (ctx) => ({ lines: [ctx.vfs.readFile("/cv.txt"), copy[ctx.lang].openHint("cv.txt")] }) },
   { name: "projects", category: "portfolio", summary: "List projects", usage: "projects", execute: (ctx) => ({ lines: listNamed(ctx, "/projects") }) },
   { name: "socials", category: "portfolio", summary: "List social profiles", usage: "socials", execute: (ctx) => ({ lines: listNamed(ctx, "/socials") }) },
+  { name: "contact", aliases: ["email"], category: "portfolio", summary: "List contact routes", usage: "contact", execute: (ctx) => ({ lines: [yellow(copy[ctx.lang].contact), ...listNamed(ctx, "/contact")] }) },
+  { name: "github", aliases: ["gh"], category: "portfolio", summary: "Open GitHub profile", usage: "github", execute: (ctx) => {
+    const url = ctx.vfs.findUrl("gh.txt") ?? ctx.vfs.findUrl("github.txt");
+    return url ? { lines: [`Opening ${url}`], openUrl: url } : { lines: [red("github: profile URL not found")] };
+  } },
   { name: "links", category: "portfolio", summary: "List quick links", usage: "links", execute: (ctx) => ({ lines: listNamed(ctx, "/quicklinks") }) },
   { name: "archive", category: "portfolio", summary: "List archive entries", usage: "archive", execute: (ctx) => ({ lines: listNamed(ctx, "/archive") }) },
 ];

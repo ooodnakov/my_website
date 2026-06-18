@@ -12,6 +12,9 @@ export class Shell {
   private currentInput = "";
   private cursor = 0;
   private historyIndex = -1;
+  private reverseSearch = false;
+  private reverseSearchQuery = "";
+  private reverseSearchInitialInput = "";
   private isProcessing = false;
   private state: ShellState = { history: [], user: "user", host: "main", branch: "main" };
 
@@ -19,9 +22,9 @@ export class Shell {
     this.term = term;
     this.vfs = vfs;
     this.registry = createCommandRegistry();
+    this.state.history = this.loadHistory();
 
-    this.term.writeln("\x1b[1;32mWelcome to the interactive terminal hub.\x1b[0m");
-    this.term.writeln("\x1b[38;5;246mType 'help' to see available commands. Use Tab for completion.\x1b[0m\n");
+    this.writeWelcome();
     this.prompt();
     this.setupEventHandlers();
   }
@@ -29,6 +32,44 @@ export class Shell {
   public updateVfs(vfs: VirtualFileSystem) {
     this.vfs = vfs;
     if (!this.isProcessing) this.redrawInput();
+  }
+
+  private writeWelcome() {
+    const isRu = this.vfs.lang === "ru";
+    const lines = isRu
+      ? [
+          "\x1b[1;32mДобро пожаловать в интерактивный terminal hub.\x1b[0m",
+          "\x1b[38;5;246mБыстрый старт: tour, links, cv, projects, contact. Tab — автодополнение. Ctrl+R — поиск по истории.\x1b[0m",
+          "\x1b[38;5;246mПодсказка: open cv.txt откроет интерактивное CV.\x1b[0m",
+        ]
+      : [
+          "\x1b[1;32mWelcome to the interactive terminal hub.\x1b[0m",
+          "\x1b[38;5;246mQuick start: tour, links, cv, projects, contact. Tab completes. Ctrl+R searches history.\x1b[0m",
+          "\x1b[38;5;246mTip: open cv.txt opens the interactive CV.\x1b[0m",
+        ];
+    lines.forEach((line) => this.term.writeln(line));
+    this.term.writeln("");
+  }
+
+  private loadHistory(): string[] {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem("terminal.history");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(-100) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveHistory() {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("terminal.history", JSON.stringify(this.state.history.slice(-100)));
+    } catch {
+      // Ignore storage quota/security failures; terminal history is an enhancement.
+    }
   }
 
   private promptText() {
@@ -67,12 +108,15 @@ export class Shell {
     if (!input || this.state.history[this.state.history.length - 1] === input) return;
     this.state.history.push(input);
     if (this.state.history.length > 100) this.state.history.shift();
+    this.saveHistory();
   }
 
   private setupEventHandlers() {
     this.term.onKey(({ key, domEvent }) => {
       if (this.isProcessing) return;
       const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1;
+
+      if (this.reverseSearch) return this.handleReverseSearchKey(key, domEvent);
 
       if (domEvent.ctrlKey) {
         const ctrl = domEvent.key.toLowerCase();
@@ -87,6 +131,7 @@ export class Shell {
         if (ctrl === "e") return this.setInput(this.currentInput, this.currentInput.length);
         if (ctrl === "u") return this.setInput(this.currentInput.slice(this.cursor), 0);
         if (ctrl === "k") return this.setInput(this.currentInput.slice(0, this.cursor), this.cursor);
+        if (ctrl === "r") return this.startReverseSearch();
         if (ctrl === "l") {
           this.term.clear();
           return this.redrawInput();
@@ -150,6 +195,85 @@ export class Shell {
     });
   }
 
+  private startReverseSearch() {
+    if (!this.state.history.length) return;
+    this.reverseSearch = true;
+    this.reverseSearchQuery = "";
+    this.reverseSearchInitialInput = this.currentInput;
+    this.term.write("\r\x1b[K(reverse-i-search) `': ");
+  }
+
+  private finishReverseSearch(restoreInitialInput = false) {
+    this.reverseSearch = false;
+    this.reverseSearchQuery = "";
+    if (restoreInitialInput) this.currentInput = this.reverseSearchInitialInput;
+    this.cursor = this.currentInput.length;
+  }
+
+  private renderReverseSearch(match: string) {
+    this.term.write(`\r\x1b[K(reverse-i-search) \`${this.reverseSearchQuery}': ${match}`);
+  }
+
+  private handleReverseSearchKey(key: string, domEvent: KeyboardEvent) {
+    if (domEvent.key === "Escape") {
+      this.finishReverseSearch(true);
+      this.redrawInput();
+      return;
+    }
+
+    if (domEvent.ctrlKey && domEvent.key.toLowerCase() === "c") {
+      this.finishReverseSearch();
+      this.currentInput = "";
+      this.cursor = 0;
+      this.term.write("^C\r\n");
+      this.prompt();
+      return;
+    }
+
+    if (domEvent.key === "Enter") {
+      const submitted = this.currentInput.trim();
+      this.finishReverseSearch();
+      this.term.write("\r\n");
+      this.currentInput = "";
+      this.cursor = 0;
+      this.runCommand(submitted);
+      return;
+    }
+
+    if (domEvent.key === "Backspace") this.reverseSearchQuery = this.reverseSearchQuery.slice(0, -1);
+    else if (!domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1) this.reverseSearchQuery += key;
+    else return;
+
+    const match = [...this.state.history].reverse().find((item) => item.includes(this.reverseSearchQuery)) ?? "";
+    this.renderReverseSearch(match);
+    if (match) {
+      this.currentInput = match;
+      this.cursor = match.length;
+    } else {
+      this.currentInput = "";
+      this.cursor = 0;
+    }
+  }
+
+  private suggestCommand(command: string): string | null {
+    const distance = (a: string, b: string) => {
+      const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+      for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+      for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,
+            dp[i][j - 1] + 1,
+            dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+          );
+        }
+      }
+      return dp[a.length][b.length];
+    };
+    const ranked = this.registry.names().map((name) => ({ name, score: distance(command, name) })).sort((a, b) => a.score - b.score);
+    return ranked[0] && ranked[0].score <= 2 ? ranked[0].name : null;
+  }
+
   private runCommand(input: string) {
     if (!input) {
       this.prompt();
@@ -177,9 +301,11 @@ export class Shell {
       const definition = this.registry.get(parsed.command);
       if (!definition) {
         this.term.writeln(`\x1b[31m${parsed.command}: command not found\x1b[0m`);
+        const suggestion = this.suggestCommand(parsed.command);
+        if (suggestion) this.term.writeln(`\x1b[38;5;246mDid you mean '${suggestion}'?\x1b[0m`);
         return;
       }
-      const result = definition.execute({ raw: commandLine, args: parsed.args, vfs: this.vfs, state: this.state, registry: this.registry });
+      const result = definition.execute({ raw: commandLine, args: parsed.args, vfs: this.vfs, state: this.state, registry: this.registry, lang: this.vfs.lang });
       if (result.clear) this.term.clear();
       result.lines?.forEach((line) => this.term.writeln(line.replace(/\n/g, "\r\n")));
       if (result.openUrl) window.open(result.openUrl, "_blank", "noopener,noreferrer");
