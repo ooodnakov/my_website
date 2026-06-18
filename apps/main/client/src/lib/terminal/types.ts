@@ -1,4 +1,5 @@
 import type { VirtualFileSystem } from "../vfs";
+import type { Language } from "../../data/home";
 
 export interface ParsedCommand {
   raw: string;
@@ -28,6 +29,7 @@ export interface CommandContext {
   vfs: VirtualFileSystem;
   state: ShellState;
   registry: CommandRegistry;
+  lang: Language;
 }
 
 export interface CommandDefinition {
