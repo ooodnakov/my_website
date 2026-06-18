@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -13,11 +13,19 @@ interface XTermTerminalProps {
   lang: Language;
 }
 
-export function XTermTerminal({ lang }: XTermTerminalProps) {
+export interface XTermTerminalHandle {
+  runCommand: (command: string) => boolean;
+}
+
+export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>(function XTermTerminal({ lang }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<Shell | null>(null);
   const vfsRef = useRef<VirtualFileSystem | null>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    runCommand: (command: string) => shellRef.current?.submitCommand(command) ?? false,
+  }), []);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -78,4 +86,4 @@ export function XTermTerminal({ lang }: XTermTerminalProps) {
       <div ref={terminalRef} className="w-full h-full" />
     </div>
   );
-}
+});

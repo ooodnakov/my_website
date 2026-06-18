@@ -9,11 +9,12 @@ test("shortcut strip and command palette expose primary navigation", async ({ pa
   await page.getByRole("button", { name: /open command palette/i }).click();
   const palette = page.getByRole("dialog", { name: /command palette/i });
   await expect(palette).toBeVisible();
-  await expect(palette.getByText("tour", { exact: true })).toBeVisible();
-  await expect(palette.getByText("open cv.txt", { exact: true })).toBeVisible();
+  await expect(palette.getByRole("button", { name: /run tour in terminal/i })).toBeVisible();
+  await expect(palette.getByRole("button", { name: /run open cv\.txt in terminal/i })).toBeVisible();
 
-  await page.keyboard.press("Escape");
+  await palette.getByRole("button", { name: /run tour in terminal/i }).click();
   await expect(palette).toBeHidden();
+  await expect(page.locator(".xterm-screen")).toContainText("Tour");
 });
 
 test("terminal accepts typing and exposes reverse-search prompt", async ({ page }) => {

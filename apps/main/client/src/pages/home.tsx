@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Language, homeContent } from "@/data/home";
 import { Header, Footer } from "@/components/home";
-import { XTermTerminal } from "@/components/home/XTermTerminal";
+import { XTermTerminal, type XTermTerminalHandle } from "@/components/home/XTermTerminal";
 
 interface HomeProps {
   lang: Language;
@@ -17,6 +17,7 @@ export default function Home({ lang }: HomeProps) {
     | undefined;
   const shortcutLabel = lang === "ru" ? "ссылки" : "shortcuts";
   const [isPaletteOpen, setPaletteOpen] = useState(false);
+  const terminalRef = useRef<XTermTerminalHandle>(null);
   const paletteCopy = lang === "ru"
     ? { button: "[палитра]", title: "Командная палитра", hint: "Быстрые команды и ссылки", close: "Закрыть" }
     : { button: "[palette]", title: "Command palette", hint: "Fast commands and links", close: "Close" };
@@ -30,6 +31,12 @@ export default function Home({ lang }: HomeProps) {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [isPaletteOpen]);
+
+  const runPaletteCommand = (command: string) => {
+    if (terminalRef.current?.runCommand(command)) {
+      setPaletteOpen(false);
+    }
+  };
 
   const copyPageLink = async () => {
     try {
@@ -65,7 +72,7 @@ export default function Home({ lang }: HomeProps) {
           </div>
 
           {/* Actual XTerm */}
-          <XTermTerminal lang={lang} />
+          <XTermTerminal ref={terminalRef} lang={lang} />
 
           <div className="border-t border-[#504945] bg-[#1d2021] px-4 py-3 text-xs text-[#a89984]">
             <span className="mr-3 text-[#fabd2f]">{shortcutLabel}</span>
@@ -112,9 +119,15 @@ export default function Home({ lang }: HomeProps) {
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {paletteCommands.map((command) => (
-                  <code key={command} className="rounded border border-[#504945] bg-[#1d2021] px-3 py-2 text-[#b8bb26]">
-                    {command}
-                  </code>
+                  <button
+                    key={command}
+                    type="button"
+                    onClick={() => runPaletteCommand(command)}
+                    className="rounded border border-[#504945] bg-[#1d2021] px-3 py-2 text-left text-[#b8bb26] transition-colors hover:border-[#b8bb26] hover:text-[#ebdbb2] focus:outline-none focus:ring-2 focus:ring-[#b8bb26]"
+                    aria-label={`Run ${command} in terminal`}
+                  >
+                    <code>{command}</code>
+                  </button>
                 ))}
                 {quickLinks?.map((link) => (
                   <a
