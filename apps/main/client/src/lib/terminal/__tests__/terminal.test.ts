@@ -5,6 +5,7 @@ import { completeInput } from "../completion";
 import { createCommandRegistry } from "../commands";
 import { parseCommand } from "../parser";
 import { Shell } from "../../shell";
+import { WasmCommandProvider } from "../wasmCommands";
 import type { ShellState } from "../types";
 
 const registry = createCommandRegistry();
@@ -20,10 +21,20 @@ assert.equal(registry.get("email"), registry.get("contact"));
 assert.equal(registry.get("gh"), registry.get("github"));
 assert.equal(registry.get("omz"), registry.get("plugins"));
 assert.equal(registry.get("zsh"), registry.get("plugins"));
+const wasmProvider = new WasmCommandProvider();
+const shellRegistry = createCommandRegistry(wasmProvider.commands);
+assert.ok(shellRegistry.get("wasm"));
+assert.ok(shellRegistry.get("jq"));
 
 assert.equal(vfs.readFile("/README.md").includes("────"), false);
 assert.ok(vfs.resolvePath("/contact/gh.txt"));
 assert.equal(vfs.findUrl("gh.txt"), "https://github.com/ooodnakov");
+assert.ok(vfs.readFile("/site.json").includes("hero"));
+assert.equal(vfs.makeDirectory("/tmp/nested", { parents: true }), "");
+assert.equal(vfs.writeFile("/tmp/nested/copy.json", vfs.readFile("/site.json")), "");
+assert.ok(vfs.resolvePath("/tmp/nested/copy.json"));
+assert.equal(vfs.remove("/tmp"), "rm: cannot remove /tmp: Is a directory");
+assert.equal(vfs.remove("/tmp", { recursive: true }), "");
 
 vfs.changeDirectory("/projects");
 vfs.setLang("ru");
@@ -31,6 +42,8 @@ assert.equal(vfs.getPwd(), "/projects");
 
 const commandCompletion = completeInput("to", registry, vfs);
 assert.equal(commandCompletion.replacement, "tour");
+const wasmCompletion = completeInput("wa", shellRegistry, vfs);
+assert.equal(wasmCompletion.replacement, "wasm");
 
 const pathCompletion = completeInput("open /cont", registry, vfs);
 assert.equal(pathCompletion.replacement, "open /contact/");
@@ -77,5 +90,16 @@ assert.equal((shell as any).currentInput, "");
 (shell as any).handleReverseSearchKey("t", { key: "t", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
 assert.equal(shell.submitCommand("plugins"), true);
 assert.equal((shell as any).reverseSearch, false);
+
+assert.ok(wasmProvider.has("jq"));
+const jqResult = await wasmProvider.execute({
+  raw: "jq -r .hero.title /site.json",
+  parsed: parseCommand("jq -r .hero.title /site.json"),
+  vfs: new VirtualFileSystem("en"),
+  state,
+  registry,
+});
+assert.equal(jqResult.exitCode, 0);
+assert.ok(jqResult.lines?.some((line) => line.length > 0));
 
 console.log("terminal tests passed");

@@ -16,9 +16,10 @@ const copy = {
       "3. projects     Explore project files, then run open <project>.txt",
       "4. cv           Show the compact CV summary",
       "5. contact      Show best ways to reach me",
+      "6. wasm         Inspect browser WASM tools; try jq -r .hero.title /site.json",
       dim("Tip: Tab completes commands and paths. Ctrl+R searches command history."),
     ],
-    start: ["Try: tour", "Try: links", "Try: open cv.txt", "Try: contact"],
+    start: ["Try: tour", "Try: links", "Try: wasm", "Try: jq -r .hero.title /site.json", "Try: contact"],
     contact: "Best contact routes",
     openHint: (name: string) => dim(`  run: open ${name}`),
   },
@@ -31,9 +32,10 @@ const copy = {
       "3. projects     Проекты; затем open <project>.txt",
       "4. cv           Краткое CV",
       "5. contact      Контакты",
+      "6. wasm         WASM-инструменты браузера; попробуй jq -r .hero.title /site.json",
       dim("Подсказка: Tab дополняет команды и пути. Ctrl+R ищет по истории."),
     ],
-    start: ["Попробуй: tour", "Попробуй: links", "Попробуй: open cv.txt", "Попробуй: contact"],
+    start: ["Попробуй: tour", "Попробуй: links", "Попробуй: wasm", "Попробуй: jq -r .hero.title /site.json", "Попробуй: contact"],
     contact: "Лучшие способы связи",
     openHint: (name: string) => dim(`  команда: open ${name}`),
   },
@@ -59,7 +61,7 @@ function listNamed(ctx: CommandContext, path: string): string[] {
   });
 }
 
-const definitions: CommandDefinition[] = [
+export const builtinCommandDefinitions: CommandDefinition[] = [
   { name: "start", aliases: ["guide"], category: "session", summary: "Show quick-start suggestions", usage: "start", execute: (ctx) => ({ lines: copy[ctx.lang].start }) },
   { name: "tour", category: "session", summary: "Take a guided portfolio tour", usage: "tour", examples: ["tour"], execute: (ctx) => ({ lines: copy[ctx.lang].tour }) },
   { name: "help", category: "session", summary: "Show available commands", usage: "help [command]", examples: ["help", "help grep"], execute: (ctx) => {
@@ -197,7 +199,8 @@ const definitions: CommandDefinition[] = [
   { name: "archive", category: "portfolio", summary: "List archive entries", usage: "archive", execute: (ctx) => ({ lines: listNamed(ctx, "/archive") }) },
 ];
 
-export function createCommandRegistry(): CommandRegistry {
+export function createCommandRegistry(extraDefinitions: CommandDefinition[] = []): CommandRegistry {
+  const definitions = [...builtinCommandDefinitions, ...extraDefinitions];
   const lookup = new Map<string, CommandDefinition>();
   for (const def of definitions) {
     lookup.set(def.name, def);

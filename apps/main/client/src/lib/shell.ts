@@ -2,13 +2,16 @@ import { Terminal } from "@xterm/xterm";
 import { VirtualFileSystem } from "./vfs";
 import { parseCommand } from "./terminal/parser";
 import { completeInput } from "./terminal/completion";
-import { createCommandRegistry } from "./terminal/commands";
-import type { CommandRegistry, ShellState } from "./terminal/types";
+import { builtinCommandDefinitions, createCommandRegistry } from "./terminal/commands";
+import { BuiltinCommandProvider, type TerminalCommandProvider } from "./terminal/providers";
+import { WasmCommandProvider } from "./terminal/wasmCommands";
+import type { CommandRegistry, CommandResult, ShellState } from "./terminal/types";
 
 export class Shell {
   private term: Terminal;
   private vfs: VirtualFileSystem;
   private registry: CommandRegistry;
+  private providers: TerminalCommandProvider[];
   private currentInput = "";
   private cursor = 0;
   private historyIndex = -1;
@@ -21,7 +24,8 @@ export class Shell {
   constructor(term: Terminal, vfs: VirtualFileSystem) {
     this.term = term;
     this.vfs = vfs;
-    this.registry = createCommandRegistry();
+    this.providers = [new BuiltinCommandProvider(builtinCommandDefinitions), new WasmCommandProvider()];
+    this.registry = createCommandRegistry(this.providers.flatMap((provider) => provider.commands).filter((definition) => !builtinCommandDefinitions.includes(definition)));
     this.state.history = this.loadHistory();
 
     this.writeWelcome();
@@ -299,7 +303,13 @@ export class Shell {
     return ranked[0] && ranked[0].score <= 2 ? ranked[0].name : null;
   }
 
-  private runCommand(input: string) {
+  private applyCommandResult(result: CommandResult) {
+    if (result.clear) this.term.clear();
+    result.lines?.forEach((line) => this.term.writeln(line.replace(/\n/g, "\r\n")));
+    if (result.openUrl && typeof window !== "undefined") window.open(result.openUrl, "_blank", "noopener,noreferrer");
+  }
+
+  private async runCommand(input: string) {
     if (!input) {
       this.prompt();
       return;
@@ -323,17 +333,15 @@ export class Shell {
     try {
       const parsed = parseCommand(commandLine);
       if (!parsed.command) return;
-      const definition = this.registry.get(parsed.command);
-      if (!definition) {
+      const provider = this.providers.find((candidate) => candidate.has(parsed.command));
+      if (!provider) {
         this.term.writeln(`\x1b[31m${parsed.command}: command not found\x1b[0m`);
         const suggestion = this.suggestCommand(parsed.command);
         if (suggestion) this.term.writeln(`\x1b[38;5;246mDid you mean '${suggestion}'?\x1b[0m`);
         return;
       }
-      const result = definition.execute({ raw: commandLine, args: parsed.args, vfs: this.vfs, state: this.state, registry: this.registry, lang: this.vfs.lang });
-      if (result.clear) this.term.clear();
-      result.lines?.forEach((line) => this.term.writeln(line.replace(/\n/g, "\r\n")));
-      if (result.openUrl) window.open(result.openUrl, "_blank", "noopener,noreferrer");
+      const result = await provider.execute({ raw: commandLine, parsed, vfs: this.vfs, state: this.state, registry: this.registry });
+      this.applyCommandResult(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       this.term.writeln(`\x1b[31mError: ${message}\x1b[0m`);

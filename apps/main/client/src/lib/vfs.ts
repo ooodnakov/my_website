@@ -82,6 +82,7 @@ export class VirtualFileSystem {
     this.addNode(root, "cv.txt", { type: "file", content: cvContent, description: "Short CV", url: cvSection?.data?.ctaUrl });
 
     this.addNode(root, "index.txt", { type: "file", content: `${content.hero.title}\n${content.hero.desc}`, description: "Landing page intro" });
+    this.addNode(root, "site.json", { type: "file", content: JSON.stringify({ hero: content.hero, sections: content.sections.map((section) => ({ type: section.type, title: section.title, data: section.data })) }, null, 2), description: "Structured homepage data for jq/wasm tools" });
 
     const contactDir = this.addNode(root, "contact", { type: "dir", children: {}, description: "Best contact routes" });
     const contactNames = new Set(["Mail", "Почта", "LI", "GH", "TG", "vCard"]);
@@ -244,6 +245,68 @@ export class VirtualFileSystem {
     if (!node) return `cat: ${path}: No such file or directory`;
     if (node.type === "dir") return `cat: ${path}: Is a directory`;
     return node.content || "";
+  }
+
+  writeFile(path: string, content: string): string {
+    const existing = this.resolvePath(path);
+    if (existing?.type === "dir") return `write: ${path}: Is a directory`;
+
+    const parts = path.split("/").filter(Boolean);
+    const name = parts.pop();
+    if (!name) return `write: ${path}: invalid path`;
+    const parentPath = path.startsWith("/") ? `/${parts.join("/")}` : parts.join("/") || ".";
+    const parent = this.resolvePath(parentPath);
+    if (!parent) return `write: ${parentPath}: No such file or directory`;
+    if (parent.type !== "dir" || !parent.children) return `write: ${parentPath}: Not a directory`;
+    this.addNode(parent, name, { type: "file", content });
+    return "";
+  }
+
+  makeDirectory(path: string, options: { parents?: boolean } = {}): string {
+    const parts = path.split("/").filter(Boolean);
+    if (!parts.length) return `mkdir: ${path}: invalid path`;
+
+    let current = path.startsWith("/") ? this.root : this.cwd;
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      if (part === ".") continue;
+      if (part === "..") {
+        current = current.parent || this.root;
+        continue;
+      }
+      if (current.type !== "dir" || !current.children) return `mkdir: cannot create directory ${path}: Not a directory`;
+      const existing = current.children[part];
+      if (existing) {
+        if (existing.type !== "dir") return `mkdir: cannot create directory ${path}: File exists`;
+        current = existing;
+        continue;
+      }
+      if (!options.parents && index < parts.length - 1) return `mkdir: cannot create directory ${path}: No such file or directory`;
+      current = this.addNode(current, part, { type: "dir", children: {} });
+    }
+    return "";
+  }
+
+  remove(path: string, options: { recursive?: boolean } = {}): string {
+    const node = this.resolvePath(path);
+    if (!node) return `rm: cannot remove ${path}: No such file or directory`;
+    if (!node.parent?.children) return `rm: refusing to remove root`;
+    if (node.type === "dir" && Object.keys(node.children ?? {}).length > 0 && !options.recursive) {
+      return `rm: cannot remove ${path}: Is a directory`;
+    }
+    delete node.parent.children[node.name];
+    if (this.cwd === node || this.pathFor(this.cwd).startsWith(`${this.pathFor(node)}/`)) this.cwd = this.root;
+    return "";
+  }
+
+  destinationPath(source: string, dest: string): string {
+    const destNode = this.resolvePath(dest);
+    if (destNode?.type === "dir") {
+      const sourceNode = this.resolvePath(source);
+      const name = sourceNode?.name ?? source.split("/").filter(Boolean).pop() ?? source;
+      return `${this.pathFor(destNode).replace(/\/$/, "")}/${name}`;
+    }
+    return dest;
   }
 
   walk(path: string = "."): VfsStat[] | string {
