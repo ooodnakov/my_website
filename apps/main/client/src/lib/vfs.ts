@@ -248,12 +248,13 @@ export class VirtualFileSystem {
   }
 
   writeFile(path: string, content: string): string {
+    const parts = path.split("/").filter(Boolean);
+    const name = parts.pop();
+    if (!name || name === "." || name === "..") return `write: ${path}: invalid path`;
+
     const existing = this.resolvePath(path);
     if (existing?.type === "dir") return `write: ${path}: Is a directory`;
 
-    const parts = path.split("/").filter(Boolean);
-    const name = parts.pop();
-    if (!name) return `write: ${path}: invalid path`;
     const parentPath = path.startsWith("/") ? `/${parts.join("/")}` : parts.join("/") || ".";
     const parent = this.resolvePath(parentPath);
     if (!parent) return `write: ${parentPath}: No such file or directory`;
@@ -277,7 +278,9 @@ export class VirtualFileSystem {
       if (current.type !== "dir" || !current.children) return `mkdir: cannot create directory ${path}: Not a directory`;
       const existing = current.children[part];
       if (existing) {
-        if (existing.type !== "dir") return `mkdir: cannot create directory ${path}: File exists`;
+        if (existing.type !== "dir" || (!options.parents && index === parts.length - 1)) {
+          return `mkdir: cannot create directory ${path}: File exists`;
+        }
         current = existing;
         continue;
       }
@@ -291,7 +294,7 @@ export class VirtualFileSystem {
     const node = this.resolvePath(path);
     if (!node) return `rm: cannot remove ${path}: No such file or directory`;
     if (!node.parent?.children) return `rm: refusing to remove root`;
-    if (node.type === "dir" && Object.keys(node.children ?? {}).length > 0 && !options.recursive) {
+    if (node.type === "dir" && !options.recursive) {
       return `rm: cannot remove ${path}: Is a directory`;
     }
     delete node.parent.children[node.name];

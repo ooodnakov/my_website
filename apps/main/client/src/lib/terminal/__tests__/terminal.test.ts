@@ -31,9 +31,12 @@ assert.ok(vfs.resolvePath("/contact/gh.txt"));
 assert.equal(vfs.findUrl("gh.txt"), "https://github.com/ooodnakov");
 assert.ok(vfs.readFile("/site.json").includes("hero"));
 assert.equal(vfs.makeDirectory("/tmp/nested", { parents: true }), "");
+assert.equal(vfs.makeDirectory("/tmp/nested"), "mkdir: cannot create directory /tmp/nested: File exists");
 assert.equal(vfs.writeFile("/tmp/nested/copy.json", vfs.readFile("/site.json")), "");
+assert.equal(vfs.writeFile("/tmp/nested/.", "bad"), "write: /tmp/nested/.: invalid path");
 assert.ok(vfs.resolvePath("/tmp/nested/copy.json"));
-assert.equal(vfs.remove("/tmp"), "rm: cannot remove /tmp: Is a directory");
+assert.equal(vfs.remove("/tmp/nested/copy.json"), "");
+assert.equal(vfs.remove("/tmp/nested"), "rm: cannot remove /tmp/nested: Is a directory");
 assert.equal(vfs.remove("/tmp", { recursive: true }), "");
 
 vfs.changeDirectory("/projects");
@@ -92,6 +95,16 @@ assert.equal(shell.submitCommand("plugins"), true);
 assert.equal((shell as any).reverseSearch, false);
 
 assert.ok(wasmProvider.has("jq"));
+const sameFileVfs = new VirtualFileSystem("en");
+const cpSelf = await wasmProvider.execute({ raw: "cp /site.json /site.json", parsed: parseCommand("cp /site.json /site.json"), vfs: sameFileVfs, state, registry });
+assert.equal(cpSelf.exitCode, 1);
+assert.ok(cpSelf.lines?.some((line) => line.includes("same file")));
+const mvSelf = await wasmProvider.execute({ raw: "mv /site.json /site.json", parsed: parseCommand("mv /site.json /site.json"), vfs: sameFileVfs, state, registry });
+assert.equal(mvSelf.exitCode, 1);
+assert.ok(mvSelf.lines?.some((line) => line.includes("same file")));
+const cpDir = await wasmProvider.execute({ raw: "cp /contact /tmp/contact", parsed: parseCommand("cp /contact /tmp/contact"), vfs: sameFileVfs, state, registry });
+assert.equal(cpDir.exitCode, 1);
+assert.ok(cpDir.lines?.some((line) => line.includes("cp: /contact: Is a directory")));
 const jqResult = await wasmProvider.execute({
   raw: "jq -r .hero.title /site.json",
   parsed: parseCommand("jq -r .hero.title /site.json"),

@@ -20,62 +20,61 @@ jobs:
           - name: main-typecheck
             node-version: 22
             working-directory: apps/main
-            lockfile: apps/main/package-lock.json
+            lockfile: apps/main/pnpm-lock.yaml
             install-all: false
-            command: npm run check
+            command: pnpm run check
           - name: cv-lint
             node-version: 22
             working-directory: apps/cv-site
-            lockfile: apps/cv-site/package-lock.json
+            lockfile: apps/cv-site/pnpm-lock.yaml
             install-all: false
-            command: npm run lint
+            command: pnpm run lint
           - name: cv-test
             node-version: 22
             working-directory: apps/cv-site
-            lockfile: apps/cv-site/package-lock.json
+            lockfile: apps/cv-site/pnpm-lock.yaml
             install-all: false
-            command: npm run test
+            command: pnpm run test
           - name: legacy-build
             node-version: 22
             working-directory: apps/legacy_rewored
-            lockfile: apps/legacy_rewored/package-lock.json
+            lockfile: apps/legacy_rewored/pnpm-lock.yaml
             install-all: false
-            command: npm run build
+            command: pnpm run build
           - name: unified-build
             node-version: 22
             working-directory: .
             lockfile: |
-              apps/main/package-lock.json
-              apps/cv-site/package-lock.json
-              apps/legacy_rewored/package-lock.json
+              apps/main/pnpm-lock.yaml
+              apps/cv-site/pnpm-lock.yaml
+              apps/legacy_rewored/pnpm-lock.yaml
             install-all: true
-            command: npm run build --prefix apps/main
+            command: pnpm --dir apps/main build
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
 
-
       - uses: pnpm/action-setup@v3
         with:
-          version: 8
+          version: 10.18.3
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          cache: pnpm
           cache-dependency-path: ${{ matrix.lockfile }}
 
       - name: Install dependencies
         if: ${{ !matrix.install-all }}
         working-directory: ${{ matrix.working-directory }}
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Install all app dependencies
         if: ${{ matrix.install-all }}
         run: |
-          npm ci --prefix apps/main
-          npm ci --prefix apps/cv-site
-          npm ci --prefix apps/legacy_rewored
+          pnpm --dir apps/main install --frozen-lockfile
+          pnpm --dir apps/cv-site install --frozen-lockfile
+          pnpm --dir apps/legacy_rewored install --frozen-lockfile
 
       - name: Run ${{ matrix.name }}
         working-directory: ${{ matrix.working-directory }}

@@ -13,6 +13,16 @@ function loadJq() {
   return jqModule;
 }
 
+function commandError(prefix: string, message: string) {
+  return red(message.replace(/^cat:/, `${prefix}:`));
+}
+
+function isSameResolvedPath(request: { vfs: TerminalCommandRequest["vfs"] }, source: string, dest: string) {
+  const resolvedSource = request.vfs.resolvePath(source);
+  const resolvedDest = request.vfs.resolvePath(request.vfs.destinationPath(source, dest));
+  return Boolean(resolvedSource && resolvedSource === resolvedDest);
+}
+
 function splitFlagsAndQuery(args: string[]) {
   const flags: string[] = [];
   const rest: string[] = [];
@@ -60,8 +70,9 @@ const definitions: CommandDefinition[] = [
     execute: (ctx) => {
       const [source, dest] = ctx.args;
       if (!source || !dest) return { lines: [red("cp: usage: cp <source> <dest>")], exitCode: 1 };
+      if (isSameResolvedPath(ctx, source, dest)) return { lines: [red(`cp: '${source}' and '${dest}' are the same file`)], exitCode: 1 };
       const content = ctx.vfs.readFile(source);
-      if (content.startsWith("cat:")) return { lines: [red(`cp: ${source}: No such file or directory`)], exitCode: 1 };
+      if (content.startsWith("cat:")) return { lines: [commandError("cp", content)], exitCode: 1 };
       const err = ctx.vfs.writeFile(ctx.vfs.destinationPath(source, dest), content);
       return { lines: err ? [red(err)] : [], exitCode: err ? 1 : 0 };
     },
@@ -75,8 +86,9 @@ const definitions: CommandDefinition[] = [
     execute: (ctx) => {
       const [source, dest] = ctx.args;
       if (!source || !dest) return { lines: [red("mv: usage: mv <source> <dest>")], exitCode: 1 };
+      if (isSameResolvedPath(ctx, source, dest)) return { lines: [red(`mv: '${source}' and '${dest}' are the same file`)], exitCode: 1 };
       const content = ctx.vfs.readFile(source);
-      if (content.startsWith("cat:")) return { lines: [red(`mv: ${source}: No such file or directory`)], exitCode: 1 };
+      if (content.startsWith("cat:")) return { lines: [commandError("mv", content)], exitCode: 1 };
       const writeErr = ctx.vfs.writeFile(ctx.vfs.destinationPath(source, dest), content);
       if (writeErr) return { lines: [red(writeErr)], exitCode: 1 };
       const removeErr = ctx.vfs.remove(source);
