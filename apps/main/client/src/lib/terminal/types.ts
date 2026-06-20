@@ -16,6 +16,11 @@ export interface CommandResult {
   exitCode?: number;
 }
 
+export interface CommandRuntime {
+  id: string;
+  label: string;
+}
+
 export interface ShellState {
   history: string[];
   user: string;
@@ -42,7 +47,7 @@ export interface CommandDefinition {
   usage: string;
   examples?: string[];
   description?: string;
-  execute: (context: CommandContext) => CommandResult;
+  execute: (context: CommandContext) => CommandResult | Promise<CommandResult>;
 }
 
 export interface CommandRegistry {
