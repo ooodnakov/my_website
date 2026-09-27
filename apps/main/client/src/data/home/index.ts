@@ -24,6 +24,10 @@ export interface ProjectItem {
   url: string;
   external?: boolean;
   description?: string;
+  role?: string;
+  impact?: string;
+  stack?: string;
+  artifact?: string;
   tech?: string;
   year?: string;
 }
@@ -116,10 +120,10 @@ export const homeContent: Record<Language, PageContent> = {
         title: "❯ eza -la projects/",
         data: {
           items: [
-            { name: "drwxr-xr-x    12  user   12 Oct 2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "video, documentation", description: "A cover/documentation experiment preserving a public creative artifact." },
-            { name: "-rw-r--r--  1.2k  user    9 Sep 2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, profile design", description: "A nostalgic web-profile experiment focused on personal expression and link curation." },
-            { name: "-rwxr-xr-x     1  user    1 Jan 2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, geometry", description: "An executable geometry construction that turns a mathematical lemma into an interactive artifact." },
-            { name: "-rw-r--r--   512  user   30 Aug 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "writing, archive", description: "Archived writing from an early public-project period." },
+            { name: "drwxr-xr-x    12  user   12 Oct 2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "video, documentation", stack: "YouTube, screen capture, narrative editing", role: "Creator and editor", impact: "Preserved a public creative artifact with enough context to revisit it later.", artifact: "Video walkthrough", description: "A cover/documentation experiment preserving a public creative artifact." },
+            { name: "-rw-r--r--  1.2k  user    9 Sep 2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, profile design", stack: "Windows93 MySpace, HTML profile customization", role: "Designer and curator", impact: "Turned a nostalgic profile surface into a compact personal link hub.", artifact: "Live profile page", description: "A nostalgic web-profile experiment focused on personal expression and link curation." },
+            { name: "-rwxr-xr-x     1  user    1 Jan 2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, geometry", stack: "GeoGebra, interactive geometry", role: "Author", impact: "Made an abstract geometry result inspectable through direct manipulation.", artifact: "Interactive construction", description: "An executable geometry construction that turns a mathematical lemma into an interactive artifact." },
+            { name: "-rw-r--r--   512  user   30 Aug 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "writing, archive", stack: "VK publishing, long-form notes", role: "Writer", impact: "Keeps early public writing reachable as part of the archive trail.", artifact: "Archived article thread", description: "Archived writing from an early public-project period." },
           ]
         }
       },
@@ -195,10 +199,10 @@ export const homeContent: Record<Language, PageContent> = {
         title: "❯ eza -la projects/",
         data: {
           items: [
-            { name: "drwxr-xr-x    12  user   12 Окт  2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "видео, документация", description: "Эксперимент с обложкой/документацией, сохраняющий публичный творческий артефакт." },
-            { name: "-rw-r--r--  1.2k  user    9 Сен  2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, дизайн профиля", description: "Ностальгический эксперимент с веб-профилем, самопрезентацией и подборкой ссылок." },
-            { name: "-rwxr-xr-x     1  user    1 Янв  2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, геометрия", description: "Исполняемая геометрическая конструкция, превращающая лемму в интерактивный артефакт." },
-            { name: "-rw-r--r--   512  user   30 Авг 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "тексты, архив", description: "Архивные тексты раннего периода публичных проектов." },
+            { name: "drwxr-xr-x    12  user   12 Окт  2020  cover-doc", url: "https://youtu.be/ILp3FTKG9Zg", external: true, year: "2020", tech: "видео, документация", stack: "YouTube, запись экрана, монтаж", role: "Автор и редактор", impact: "Сохраняет публичный творческий артефакт с контекстом для возврата к нему.", artifact: "Видео-разбор", description: "Эксперимент с обложкой/документацией, сохраняющий публичный творческий артефакт." },
+            { name: "-rw-r--r--  1.2k  user    9 Сен  2019  myspace-exp", url: "https://myspace.windows93.net/index.php?id=216", external: true, year: "2019", tech: "Windows93, дизайн профиля", stack: "Windows93 MySpace, HTML-кастомизация", role: "Дизайнер и куратор", impact: "Превращает ностальгический профиль в компактный персональный хаб ссылок.", artifact: "Живая страница профиля", description: "Ностальгический эксперимент с веб-профилем, самопрезентацией и подборкой ссылок." },
+            { name: "-rwxr-xr-x     1  user    1 Янв  2019  lemma", url: "https://www.geogebra.org/geometry/srsyvgca", external: true, year: "2019", tech: "GeoGebra, геометрия", stack: "GeoGebra, интерактивная геометрия", role: "Автор", impact: "Делает абстрактный геометрический результат доступным через прямое взаимодействие.", artifact: "Интерактивная конструкция", description: "Исполняемая геометрическая конструкция, превращающая лемму в интерактивный артефакт." },
+            { name: "-rw-r--r--   512  user   30 Авг 2016  articles", url: "https://vk.com/wall-168427103_141", external: true, year: "2016", tech: "тексты, архив", stack: "VK-публикации, длинные заметки", role: "Автор", impact: "Оставляет ранние публичные тексты доступными как часть архивного следа.", artifact: "Архивная ветка статей", description: "Архивные тексты раннего периода публичных проектов." },
           ]
         }
       },

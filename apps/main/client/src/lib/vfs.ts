@@ -137,7 +137,11 @@ export class VirtualFileSystem {
             content: [
               rawName,
               project.year ? `Year: ${project.year}` : undefined,
+              project.role ? `Role: ${project.role}` : undefined,
               project.tech ? `Tech: ${project.tech}` : undefined,
+              project.stack ? `Stack: ${project.stack}` : undefined,
+              project.impact ? `Impact: ${project.impact}` : undefined,
+              project.artifact ? `Artifact: ${project.artifact}` : undefined,
               project.description ? `Why it matters: ${project.description}` : "Why it matters: shows long-running experiments and public artifacts.",
               `URL: ${project.url}`,
               `Try: open ${rawName}.txt`,

@@ -18,6 +18,7 @@ assert.equal(parseCommand("  PROJECTS  ").command, "projects");
 assert.ok(registry.get("tour"));
 assert.equal(registry.get("resume"), registry.get("cv"));
 assert.equal(registry.get("email"), registry.get("contact"));
+assert.equal(registry.get("copy-email"), registry.get("copy-contact"));
 assert.equal(registry.get("gh"), registry.get("github"));
 assert.equal(registry.get("omz"), registry.get("plugins"));
 assert.equal(registry.get("zsh"), registry.get("plugins"));
@@ -30,6 +31,9 @@ assert.equal(vfs.readFile("/README.md").includes("────"), false);
 assert.ok(vfs.resolvePath("/contact/gh.txt"));
 assert.equal(vfs.findUrl("gh.txt"), "https://github.com/ooodnakov");
 assert.ok(vfs.readFile("/site.json").includes("hero"));
+assert.ok(vfs.readFile("/projects/lemma.txt").includes("Role:"));
+assert.ok(vfs.readFile("/projects/lemma.txt").includes("Impact:"));
+assert.ok(vfs.readFile("/projects/lemma.txt").includes("Artifact:"));
 assert.equal(vfs.makeDirectory("/tmp/nested", { parents: true }), "");
 assert.equal(vfs.makeDirectory("/tmp/nested"), "mkdir: cannot create directory /tmp/nested: File exists");
 assert.equal(vfs.writeFile("/tmp/nested/copy.json", vfs.readFile("/site.json")), "");
@@ -56,6 +60,9 @@ assert.ok(tour.lines?.some((line) => line.includes("links")));
 
 const contact = registry.get("contact")!.execute({ raw: "contact", args: [], vfs, state, registry, lang: "en" });
 assert.ok(contact.lines?.some((line) => line.includes("github.com/ooodnakov")));
+
+const copiedContact = await registry.get("copy-contact")!.execute({ raw: "copy-contact", args: [], vfs, state, registry, lang: "en" });
+assert.ok(copiedContact.lines?.some((line) => line.includes("ooodnakov@yandex.ru")));
 
 const github = registry.get("github")!.execute({ raw: "github", args: [], vfs, state, registry, lang: "en" });
 assert.equal(github.openUrl, "https://github.com/ooodnakov");
@@ -93,6 +100,24 @@ assert.equal((shell as any).currentInput, "");
 (shell as any).handleReverseSearchKey("t", { key: "t", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
 assert.equal(shell.submitCommand("plugins"), true);
 assert.equal((shell as any).reverseSearch, false);
+
+const previousWindow = (globalThis as any).window;
+const storage: Record<string, string> = {
+  "terminal.history": JSON.stringify(["about"]),
+};
+(globalThis as any).window = {
+  localStorage: {
+    getItem: (key: string) => storage[key] ?? null,
+    setItem: (key: string, value: string) => {
+      storage[key] = value;
+    },
+  },
+};
+const persistedShell = new Shell(fakeTerminal as never, new VirtualFileSystem("en"));
+assert.deepEqual((persistedShell as any).state.history, ["about"]);
+assert.equal(persistedShell.submitCommand("contact"), true);
+assert.ok(storage["terminal.history"].includes("contact"));
+(globalThis as any).window = previousWindow;
 
 assert.ok(wasmProvider.has("jq"));
 const sameFileVfs = new VirtualFileSystem("en");

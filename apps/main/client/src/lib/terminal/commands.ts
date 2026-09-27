@@ -6,6 +6,16 @@ const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[1;33m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[38;5;246m${s}\x1b[0m`;
 
+async function writeClipboard(text: string) {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const copy = {
   en: {
     tour: [
@@ -21,6 +31,8 @@ const copy = {
     ],
     start: ["Try: tour", "Try: links", "Try: wasm", "Try: jq -r .hero.title /site.json", "Try: contact"],
     contact: "Best contact routes",
+    copyContactCopied: "Copied contact to clipboard:",
+    copyContactFallback: "Clipboard unavailable; select this contact:",
     openHint: (name: string) => dim(`  run: open ${name}`),
   },
   ru: {
@@ -37,6 +49,8 @@ const copy = {
     ],
     start: ["Попробуй: tour", "Попробуй: links", "Попробуй: wasm", "Попробуй: jq -r .hero.title /site.json", "Попробуй: contact"],
     contact: "Лучшие способы связи",
+    copyContactCopied: "Контакт скопирован в буфер:",
+    copyContactFallback: "Буфер недоступен; выделите контакт:",
     openHint: (name: string) => dim(`  команда: open ${name}`),
   },
 };
@@ -191,6 +205,12 @@ export const builtinCommandDefinitions: CommandDefinition[] = [
   { name: "projects", category: "portfolio", summary: "List projects", usage: "projects", execute: (ctx) => ({ lines: listNamed(ctx, "/projects") }) },
   { name: "socials", category: "portfolio", summary: "List social profiles", usage: "socials", execute: (ctx) => ({ lines: listNamed(ctx, "/socials") }) },
   { name: "contact", aliases: ["email"], category: "portfolio", summary: "List contact routes", usage: "contact", execute: (ctx) => ({ lines: [yellow(copy[ctx.lang].contact), ...listNamed(ctx, "/contact")] }) },
+  { name: "copy-contact", aliases: ["copy-email"], category: "portfolio", summary: "Copy the primary email contact", usage: "copy-contact", execute: async (ctx) => {
+    const mailUrl = ctx.vfs.findUrl("mail.txt") ?? ctx.vfs.findUrl("почта.txt") ?? "mailto:ooodnakov@yandex.ru";
+    const contact = mailUrl.replace(/^mailto:/, "");
+    const copied = await writeClipboard(contact);
+    return { lines: [yellow(copied ? copy[ctx.lang].copyContactCopied : copy[ctx.lang].copyContactFallback), contact] };
+  } },
   { name: "github", aliases: ["gh"], category: "portfolio", summary: "Open GitHub profile", usage: "github", execute: (ctx) => {
     const url = ctx.vfs.findUrl("gh.txt") ?? ctx.vfs.findUrl("github.txt");
     return url ? { lines: [`Opening ${url}`], openUrl: url } : { lines: [red("github: profile URL not found")] };

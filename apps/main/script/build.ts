@@ -3,6 +3,7 @@ import { build as viteBuild } from "vite";
 import { cp, readFile, rm, stat } from "fs/promises";
 import { execFileSync } from "child_process";
 import path from "path";
+import { fileURLToPath } from "url";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -35,7 +36,8 @@ const allowlist = [
 ];
 
 async function buildAll() {
-  const projectRoot = path.resolve(import.meta.dirname, "..");
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const projectRoot = path.resolve(scriptDir, "..");
   const repoRoot = path.resolve(projectRoot, "..", "..");
   const cvRoot = path.resolve(repoRoot, "apps", "cv-site");
   const legacyRoot = path.resolve(repoRoot, "apps", "legacy_rewored");

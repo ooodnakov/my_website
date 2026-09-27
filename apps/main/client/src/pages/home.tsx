@@ -3,6 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Language, homeContent } from "@/data/home";
 import { Header, Footer } from "@/components/home";
 import { XTermTerminal, type XTermTerminalHandle } from "@/components/home/XTermTerminal";
+import { applyHomeMetadata } from "@/lib/pageMetadata";
 
 interface HomeProps {
   lang: Language;
@@ -21,7 +22,24 @@ export default function Home({ lang }: HomeProps) {
   const paletteCopy = lang === "ru"
     ? { button: "[палитра]", title: "Командная палитра", hint: "Быстрые команды и ссылки", close: "Закрыть", busy: "Терминал занят. Пожалуйста, подождите." }
     : { button: "[palette]", title: "Command palette", hint: "Fast commands and links", close: "Close", busy: "Terminal is busy. Please wait." };
-  const paletteCommands = useMemo(() => ["tour", "plugins", "links", "open cv.txt", "projects", "contact", "github"], []);
+  const paletteCommands = useMemo(() => ["tour", "plugins", "links", "open cv.txt", "projects", "contact", "copy-contact", "github"], []);
+  const guidedActions = useMemo(() => lang === "ru"
+    ? [
+        { label: "тур", command: "tour" },
+        { label: "проекты", command: "projects" },
+        { label: "CV", command: "open cv.txt" },
+        { label: "контакт", command: "contact" },
+      ]
+    : [
+        { label: "tour", command: "tour" },
+        { label: "work", command: "projects" },
+        { label: "CV", command: "open cv.txt" },
+        { label: "contact", command: "contact" },
+      ], [lang]);
+
+  useEffect(() => {
+    applyHomeMetadata(lang);
+  }, [lang]);
 
   useEffect(() => {
     if (!isPaletteOpen) return;
@@ -75,6 +93,23 @@ export default function Home({ lang }: HomeProps) {
 
           {/* Actual XTerm */}
           <XTermTerminal ref={terminalRef} lang={lang} />
+
+          <div className="border-t border-[#504945] bg-[#282828] px-4 py-3 text-xs text-[#a89984]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 text-[#fabd2f]">{lang === "ru" ? "гость" : "visitor"}</span>
+              {guidedActions.map((action) => (
+                <button
+                  key={action.command}
+                  type="button"
+                  onClick={() => runPaletteCommand(action.command)}
+                  className="min-h-8 rounded border border-[#504945] bg-[#1d2021] px-3 py-1.5 text-[#b8bb26] transition-colors hover:border-[#b8bb26] hover:text-[#ebdbb2] focus:outline-none focus:ring-2 focus:ring-[#b8bb26]"
+                  aria-label={lang === "ru" ? `Запустить ${action.command} в терминале` : `Run ${action.command} in terminal`}
+                >
+                  [{action.label}]
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div className="border-t border-[#504945] bg-[#1d2021] px-4 py-3 text-xs text-[#a89984]">
             <span className="mr-3 text-[#fabd2f]">{shortcutLabel}</span>
