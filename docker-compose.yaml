@@ -3,18 +3,35 @@ services:
     build:
       context: .
       dockerfile: ./apps/main/Dockerfile
+      args:
+        # Build-time only: absolute base URL for og:image/twitter:image meta tags.
+        SITE_URL: ${SITE_URL:-}
     container_name: website
     hostname: website
     environment:
-      TZ: "UTC"
-      NODE_ENV: "production"
-      PORT: "5000"
-    # ports:
-    #   - "8082:5000"
+      TZ: ${TZ:-UTC}
+      NODE_ENV: production
+      PORT: 5000
+    ports:
+      - "${WEBSITE_BIND:-127.0.0.1}:${HOST_PORT:-8082}:5000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5000/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
     networks:
       - proxy
 
 networks:
+  # Pre-existing network shared with the host reverse proxy.
+  # Create it once on the Docker host: docker network create proxy
   proxy:
     external: true

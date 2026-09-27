@@ -20,6 +20,9 @@ RUN pnpm install --frozen-lockfile
 WORKDIR /workspace
 COPY . .
 
+# Optional base URL for og:image/twitter:image absolutization (compose build arg).
+ARG SITE_URL=""
+
 WORKDIR /workspace/apps/main
 RUN pnpm run build
 

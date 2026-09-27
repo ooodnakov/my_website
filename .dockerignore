@@ -11,4 +11,19 @@ apps/**/.turbo
 apps/**/.local
 apps/**/.agents
 
+# Secrets and local compose overrides must never enter the build context
+.env
+.env.*
+compose.override.yaml
+
+# Deployment / docs / test artifacts not needed for the build
+compose.yaml
+docker-compose.yaml
+docker-compose.yml
+coverage
+apps/**/coverage
+apps/**/e2e
+apps/**/playwright*
+attached_assets
+
 *.log

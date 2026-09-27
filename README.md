@@ -34,3 +34,38 @@ This repository groups the current website-related sources into one place.
 ## CI
 
 - GitHub Actions now runs type-checking for `apps/main`, lint/tests for `apps/cv-site`, a build for `apps/legacy_rewored`, and a full unified build that verifies the cross-app integration path.
+
+## Dockhand deployment
+
+Deploy this repository as a Git-managed Docker Compose stack.
+
+- **Compose file:** `docker-compose.yaml` at the repository root (context directory: repo root).
+- **Quick start:**
+
+  ```sh
+  git clone <repo> && cd <repo>
+  cp .env.example .env   # adjust values (no secrets required)
+  docker compose config  # validate
+  docker compose up -d --build
+  ```
+
+  Updates work with `docker compose pull && docker compose up -d --build`; no `down` needed.
+
+- **Environment variables** (see `.env.example`; all are optional with defaults, none are secrets):
+  - `WEBSITE_BIND` (default `127.0.0.1`) — host address for the published port.
+  - `HOST_PORT` (default `8082`) — host port mapped to the container's `5000`.
+  - `TZ` (default `UTC`).
+  - `SITE_URL` (default empty) — optional build-time base URL for `og:image`/`twitter:image` meta tags.
+- **Secrets:** none required. Runtime state is in-memory; the app reads no credential variables. Never commit real `.env` values — `.env*` is gitignored, `compose.override.yaml` too.
+- **Persistent volumes:** none. The container is stateless (no database, in-memory state), so recreations and updates lose nothing.
+- **External network:** the `website` service joins an external Docker network named `proxy`, assumed to host the reverse proxy. Create it once per Docker host if it does not exist:
+
+  ```sh
+  docker network create proxy
+  ```
+
+  Dockhand will not create it automatically.
+- **Ports:** the container publishes `127.0.0.1:8082 -> 5000` by default (loopback-only, fronted by the reverse proxy on the `proxy` network).
+- **Build images on deploy:** yes (the image is built from this repo via `apps/main/Dockerfile`; there is no registry image to pull).
+- **Migrations/init:** none. No database is provisioned or migrated; no manual setup commands are needed.
+- Note: `apps/legacy_rewored/docker-compose.yaml` is a separate legacy-only stack (Apache serving `legacy_old`) and is not part of this deployment.
