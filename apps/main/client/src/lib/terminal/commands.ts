@@ -5,6 +5,11 @@ const blue = (s: string) => `\x1b[1;34m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[1;33m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[38;5;246m${s}\x1b[0m`;
+const cyan = (s: string) => `\x1b[1;36m${s}\x1b[0m`;
+
+// OSC 8 links are understood by modern terminals (including xterm.js). This
+// keeps the familiar CLI output while making URL-backed virtual files tappable.
+const link = (label: string, url?: string) => url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
 
 async function writeClipboard(text: string) {
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
@@ -70,7 +75,8 @@ function listNamed(ctx: CommandContext, path: string): string[] {
   const stats = ctx.vfs.listStats(path);
   if (typeof stats === "string") return [red(stats)];
   return stats.map((item) => {
-    const label = item.type === "dir" ? blue(`${item.name}/`) : item.executable ? green(item.name) : item.name;
+    const styled = item.type === "dir" ? blue(`${item.name}/`) : item.executable ? green(item.name) : item.name;
+    const label = link(styled, item.url);
     return item.url ? `${label} -> ${item.url}\n${copy[ctx.lang].openHint(item.name)}` : label;
   });
 }
@@ -110,13 +116,30 @@ export const builtinCommandDefinitions: CommandDefinition[] = [
     const err = ctx.vfs.changeDirectory(ctx.args[0] || "/");
     return err ? { lines: [red(err)] } : {};
   } },
-  { name: "ls", aliases: ["eza", "ll", "la"], category: "filesystem", summary: "List directory contents", usage: "ls [-la] [dir]", examples: ["ls", "ll projects"], execute: (ctx) => {
-    const long = ctx.raw.split(/\s+/)[0] === "ll" || ctx.raw.includes("-l") || ctx.raw.includes("-a");
+  { name: "ls", category: "filesystem", summary: "List directory contents (classic)", usage: "ls [-la] [dir]", examples: ["ls", "ls -la projects"], execute: (ctx) => {
+    const long = ctx.raw.includes("-l") || ctx.raw.includes("-a");
     const target = ctx.args.find((a) => !a.startsWith("-")) || ".";
     const stats = ctx.vfs.listStats(target);
     if (typeof stats === "string") return { lines: [red(stats)] };
-    if (long) return { lines: stats.map((s) => `${s.mode} ${String(s.size).padStart(5)} ${s.mtime} ${s.type === "dir" ? blue(`${s.name}/`) : s.executable ? green(s.name) : s.name}`) };
-    return { lines: [stats.map((s) => s.type === "dir" ? blue(`${s.name}/`) : s.executable ? green(s.name) : s.name).join("  ")] };
+    const classicName = (s: (typeof stats)[number]) => link(s.type === "dir" ? blue(`${s.name}/`) : s.executable ? green(s.name) : s.name, s.url);
+    if (long) return { lines: stats.map((s) => `${s.mode} ${String(s.size).padStart(5)} ${s.mtime} ${classicName(s)}`) };
+    return { lines: [stats.map(classicName).join("  ")] };
+  } },
+  { name: "eza", aliases: ["ll", "la"], category: "filesystem", summary: "List files with icons and metadata", usage: "eza [-la] [dir]", examples: ["eza", "ll projects"], execute: (ctx) => {
+    const long = ["ll", "la"].includes(ctx.raw.trim().split(/\s+/)[0]) || ctx.args.some((arg) => arg.startsWith("-") && /[la]/.test(arg));
+    const target = ctx.args.find((arg) => !arg.startsWith("-")) || ".";
+    const stats = ctx.vfs.listStats(target);
+    if (typeof stats === "string") return { lines: [red(stats.replace(/^ls:/, "eza:"))] };
+    const modernName = (s: (typeof stats)[number]) => {
+      const icon = s.type === "dir" ? "" : s.executable ? "" : s.name.endsWith(".json") ? "" : s.name.endsWith(".md") ? "" : "";
+      const name = s.type === "dir" ? blue(`${s.name}/`) : s.executable ? green(s.name) : cyan(s.name);
+      return `${dim(icon)} ${link(name, s.url)}`;
+    };
+    if (!long) return { lines: [stats.map(modernName).join("   ")] };
+    return { lines: [
+      dim("Permissions  Size  Modified       Name"),
+      ...stats.map((s) => `${dim(s.mode)}  ${yellow(String(s.size).padStart(4))}  ${dim(s.mtime)}  ${modernName(s)}`),
+    ] };
   } },
   { name: "tree", category: "filesystem", summary: "Print recursive directory tree", usage: "tree [dir]", execute: (ctx) => {
     const start = ctx.args[0] || ".";

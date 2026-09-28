@@ -30,20 +30,32 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    // Initialize Terminal
+    const openSafeLink = (uri: string) => {
+      if (!/^(https?:|mailto:)/i.test(uri)) return;
+      window.open(uri, '_blank', 'noopener,noreferrer');
+    };
+
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-      fontSize: 14,
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      fontFamily: '"Meslo Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontSize: window.matchMedia('(max-width: 640px)').matches ? 12 : 14,
+      lineHeight: 1.25,
+      letterSpacing: 0.2,
+      scrollback: 2000,
+      smoothScrollDuration: 100,
       theme: terminalTheme,
-
       convertEol: true,
+      linkHandler: {
+        activate: (_event, uri) => openSafeLink(uri),
+      },
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    const webLinksAddon = new WebLinksAddon();
+    const webLinksAddon = new WebLinksAddon((_event, uri) => openSafeLink(uri));
     term.loadAddon(webLinksAddon);
 
     term.open(terminalRef.current);
@@ -56,14 +68,23 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     vfsRef.current = vfs;
     shellRef.current = new Shell(term, vfs);
 
-    // Handle Resize
+    let resizeFrame = 0;
     const handleResize = () => {
-      fitAddon.fit();
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        if (terminalRef.current?.isConnected) fitAddon.fit();
+      });
     };
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(terminalRef.current);
     window.addEventListener('resize', handleResize);
+    window.visualViewport?.addEventListener('resize', handleResize);
 
     return () => {
+      cancelAnimationFrame(resizeFrame);
+      resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('resize', handleResize);
       term.dispose();
       termInstanceRef.current = null;
     };
@@ -77,13 +98,30 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     }
   }, [lang]);
 
+  const runMobileCommand = (command: string) => shellRef.current?.submitCommand(command);
+  const focusTerminal = () => {
+    termInstanceRef.current?.focus();
+    terminalRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
   return (
-    <div
-      className="w-full h-[min(70vh,720px)] min-h-[360px] overflow-hidden bg-[#282828]"
-      style={{ padding: '12px' }}
-      onClick={() => termInstanceRef.current?.focus()}
-    >
-      <div ref={terminalRef} className="w-full h-full" />
+    <div className="terminal-workspace bg-[#282828]">
+      <div
+        className="terminal-surface"
+        onClick={focusTerminal}
+        role="application"
+        aria-label={lang === 'ru' ? 'Интерактивный терминал' : 'Interactive terminal'}
+      >
+        <div ref={terminalRef} className="h-full w-full" />
+      </div>
+      <div className="terminal-mobile-bar" aria-label={lang === 'ru' ? 'Быстрые команды терминала' : 'Terminal quick commands'}>
+        {['ls', 'eza', 'links', 'clear'].map((command) => (
+          <button key={command} type="button" onClick={() => runMobileCommand(command)}>{command}</button>
+        ))}
+        <button type="button" className="terminal-keyboard-button" onClick={focusTerminal} aria-label={lang === 'ru' ? 'Открыть клавиатуру' : 'Open keyboard'}>
+          <span aria-hidden="true">⌨</span> {lang === 'ru' ? 'ввод' : 'type'}
+        </button>
+      </div>
     </div>
   );
 });

@@ -22,6 +22,8 @@ assert.equal(registry.get("copy-email"), registry.get("copy-contact"));
 assert.equal(registry.get("gh"), registry.get("github"));
 assert.equal(registry.get("omz"), registry.get("plugins"));
 assert.equal(registry.get("zsh"), registry.get("plugins"));
+assert.notEqual(registry.get("ls"), registry.get("eza"));
+assert.equal(registry.get("ll"), registry.get("eza"));
 const wasmProvider = new WasmCommandProvider();
 const shellRegistry = createCommandRegistry(wasmProvider.commands);
 assert.ok(shellRegistry.get("wasm"));
@@ -69,6 +71,12 @@ assert.equal(github.openUrl, "https://github.com/ooodnakov");
 
 const plugins = registry.get("plugins")!.execute({ raw: "plugins", args: [], vfs, state, registry, lang: "en" });
 assert.ok(plugins.lines?.some((line) => line.includes("Oh My Zsh") || line.includes("autosuggestions")));
+
+const classicListing = registry.get("ls")!.execute({ raw: "ls /projects", args: ["/projects"], vfs, state, registry, lang: "en" });
+const modernListing = registry.get("eza")!.execute({ raw: "eza -la /projects", args: ["-la", "/projects"], vfs, state, registry, lang: "en" });
+assert.ok(classicListing.lines?.some((line) => line.includes("\x1b]8;;https://")));
+assert.ok(modernListing.lines?.some((line) => line.includes("Permissions")));
+assert.ok(modernListing.lines?.some((line) => line.includes("") || line.includes("")));
 
 const terminalWrites: string[] = [];
 const fakeTerminal = {
