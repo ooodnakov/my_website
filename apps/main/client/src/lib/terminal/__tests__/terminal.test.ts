@@ -79,12 +79,13 @@ assert.ok(modernListing.lines?.some((line) => line.includes("Permissions")));
 assert.ok(modernListing.lines?.some((line) => line.includes("") || line.includes("")));
 
 const terminalWrites: string[] = [];
+let terminalFocuses = 0;
 const fakeTerminal = {
   write: (value: string) => terminalWrites.push(value),
   writeln: (value: string) => terminalWrites.push(`${value}\n`),
   clear: () => terminalWrites.push("<clear>"),
   onKey: () => undefined,
-  focus: () => undefined,
+  focus: () => { terminalFocuses += 1; },
 };
 const shell = new Shell(fakeTerminal as never, new VirtualFileSystem("en"));
 (shell as any).state.history = ["about", "projects", "contact"];
@@ -106,7 +107,10 @@ assert.equal((shell as any).currentInput, "");
 (shell as any).state.history = ["tour"];
 (shell as any).startReverseSearch();
 (shell as any).handleReverseSearchKey("t", { key: "t", altKey: false, ctrlKey: false, metaKey: false } as KeyboardEvent);
+assert.equal(shell.submitCommand("", false), true);
+assert.equal(terminalFocuses, 0);
 assert.equal(shell.submitCommand("plugins"), true);
+assert.equal(terminalFocuses, 1);
 assert.equal((shell as any).reverseSearch, false);
 
 const previousWindow = (globalThis as any).window;

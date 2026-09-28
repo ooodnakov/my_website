@@ -31,7 +31,18 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     if (!terminalRef.current) return;
 
     const openSafeLink = (uri: string) => {
-      if (!/^(https?:|mailto:)/i.test(uri)) return;
+      const hasAllowedScheme = /^(https?:|mailto:)/i.test(uri);
+      let isSameOriginRelative = false;
+
+      if (!/^[a-z][a-z\d+.-]*:/i.test(uri)) {
+        try {
+          isSameOriginRelative = new URL(uri, window.location.href).origin === window.location.origin;
+        } catch {
+          return;
+        }
+      }
+
+      if (!hasAllowedScheme && !isSameOriginRelative) return;
       window.open(uri, '_blank', 'noopener,noreferrer');
     };
 
@@ -98,7 +109,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     }
   }, [lang]);
 
-  const runMobileCommand = (command: string) => shellRef.current?.submitCommand(command);
+  const runMobileCommand = (command: string) => shellRef.current?.submitCommand(command, false);
   const focusTerminal = () => {
     termInstanceRef.current?.focus();
     terminalRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

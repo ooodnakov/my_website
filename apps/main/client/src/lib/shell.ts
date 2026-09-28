@@ -119,7 +119,7 @@ export class Shell {
     this.saveHistory();
   }
 
-  public submitCommand(input: string): boolean {
+  public submitCommand(input: string, focus = true): boolean {
     if (this.isProcessing) return false;
     if (this.reverseSearch) {
       this.finishReverseSearch(false);
@@ -130,7 +130,7 @@ export class Shell {
     this.currentInput = "";
     this.cursor = 0;
     this.runCommand(submitted);
-    this.term.focus();
+    if (focus) this.term.focus();
     return true;
   }
 
