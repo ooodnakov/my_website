@@ -69,26 +69,27 @@ export default function Home({ lang }: HomeProps) {
 
   return (
     <div
-      className="min-h-screen bg-[#1d2021] px-4 py-6 sm:px-8 sm:py-8 font-mono text-sm selection:bg-[#fe8019] selection:text-[#282828] flex flex-col"
+      className="min-h-screen bg-[#1d2021] px-2 py-4 sm:px-8 sm:py-8 font-mono text-sm selection:bg-[#fe8019] selection:text-[#282828] flex flex-col"
     >
       <Header lang={lang} nextLang={nextLang} copyPageLink={copyPageLink} />
 
-      <main className="mx-auto w-full max-w-5xl flex-grow flex flex-col justify-center py-8">
+      <main className="mx-auto w-full max-w-5xl flex-grow flex flex-col justify-center py-4 sm:py-8">
 
         {/* Terminal Window Decoration */}
-        <div className="w-full shadow-2xl rounded-lg overflow-hidden border border-[#504945] bg-[#282828]">
+        <div className="terminal-window w-full overflow-hidden rounded-xl border border-[#504945] bg-[#282828] shadow-2xl">
 
           {/* Mac-like Window Header */}
-          <div className="bg-[#3c3836] px-4 py-2 flex items-center justify-between border-b border-[#504945]">
+          <div className="bg-[#3c3836]/95 px-3 py-2.5 sm:px-4 flex items-center justify-between border-b border-[#504945]">
             <div className="flex gap-2">
               <div className="w-3 h-3 rounded-full bg-[#cc241d]"></div>
               <div className="w-3 h-3 rounded-full bg-[#d79921]"></div>
               <div className="w-3 h-3 rounded-full bg-[#98971a]"></div>
             </div>
-            <div className="text-[#a89984] text-xs font-semibold">
+            <div className="flex items-center gap-2 text-[#d5c4a1] text-[11px] sm:text-xs font-semibold">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#b8bb26] shadow-[0_0_8px_#b8bb26]" aria-hidden="true" />
               zsh · user@main:~
             </div>
-            <div className="w-16"></div> {/* Spacer for centering */}
+            <div className="hidden w-16 text-right text-[10px] text-[#928374] sm:block">online</div>
           </div>
 
           {/* Actual XTerm */}

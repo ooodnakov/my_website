@@ -72,3 +72,72 @@ test("terminal advertises zsh plugin behavior", async ({ page }) => {
   await expect(page.locator(".xterm-screen")).toContainText("zsh runtime");
   await expect(page.locator(".xterm-screen")).toContainText("autosuggestions");
 });
+
+test("mobile terminal stays usable and exposes touch shortcuts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const quickCommands = page.getByLabel("Terminal quick commands");
+  await expect(quickCommands).toBeVisible();
+  await expect(quickCommands.getByRole("button", { name: "Open keyboard" })).toBeVisible();
+
+  await quickCommands.getByRole("button", { name: "eza", exact: true }).click();
+  await expect(page.locator(".xterm-screen")).toContainText("README.md");
+  await expect(page.locator(".xterm-helper-textarea")).not.toBeFocused();
+
+  await quickCommands.getByRole("button", { name: "ls", exact: true }).click();
+  await expect(page.locator(".terminal-surface")).toBeInViewport();
+  await expect(page.locator(".terminal-surface")).toHaveCSS("min-height", "300px");
+});
+
+test("ls and eza are distinct and URL-backed files are terminal links", async ({ page }) => {
+  await page.goto("/");
+  const terminal = page.locator(".xterm-helper-textarea");
+  await terminal.click();
+  await page.keyboard.type("ls /projects");
+  await page.keyboard.press("Enter");
+  const linkedRow = page.locator(".xterm-rows > div").filter({ hasText: "lemma.txt" }).last();
+  await expect(linkedRow).toContainText("lemma.txt");
+  await page.evaluate(() => {
+    (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
+    window.open = ((url?: string | URL) => {
+      (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = String(url);
+      return null;
+    }) as typeof window.open;
+  });
+  const rowText = await linkedRow.textContent() ?? "";
+  const filenameOffset = rowText.indexOf("lemma.txt");
+  const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+  const rowBox = await linkedRow.boundingBox();
+  expect(rowBox).not.toBeNull();
+  await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 4), rowBox!.y + rowBox!.height / 2);
+  await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
+
+  await page.keyboard.type("eza -la /projects");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".xterm-screen")).toContainText("Permissions");
+});
+
+test("same-origin relative terminal links open safely", async ({ page }) => {
+  await page.goto("/");
+  const terminal = page.locator(".xterm-helper-textarea");
+  await terminal.click();
+  await page.keyboard.type("ls /quicklinks");
+  await page.keyboard.press("Enter");
+  const linkedRow = page.locator(".xterm-rows > div").filter({ hasText: "cv.txt" }).last();
+  await expect(linkedRow).toContainText("cv.txt");
+  await page.evaluate(() => {
+    (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
+    window.open = ((url?: string | URL) => {
+      (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = String(url);
+      return null;
+    }) as typeof window.open;
+  });
+  const rowText = await linkedRow.textContent() ?? "";
+  const filenameOffset = rowText.indexOf("cv.txt");
+  const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+  const rowBox = await linkedRow.boundingBox();
+  expect(rowBox).not.toBeNull();
+  await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 2), rowBox!.y + rowBox!.height / 2);
+  await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
+});
