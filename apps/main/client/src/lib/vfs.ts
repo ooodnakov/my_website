@@ -14,6 +14,9 @@ export interface VfsNode {
   description?: string;
   url?: string;
   executable?: boolean;
+  owner?: string;
+  group?: string;
+  gitStatus?: "modified" | "added" | "untracked" | "deleted" | "ignored" | "conflicted";
 }
 
 export interface VfsStat {
@@ -26,6 +29,9 @@ export interface VfsStat {
   description?: string;
   url?: string;
   executable?: boolean;
+  owner?: string;
+  group?: string;
+  gitStatus?: VfsNode["gitStatus"];
 }
 
 export class VirtualFileSystem {
@@ -228,6 +234,9 @@ export class VirtualFileSystem {
       description: node.description,
       url: node.url,
       executable: node.executable,
+      owner: node.owner,
+      group: node.group,
+      gitStatus: node.gitStatus,
     };
   }
 

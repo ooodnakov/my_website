@@ -81,8 +81,13 @@ test("mobile terminal stays usable and exposes touch shortcuts", async ({ page }
   await expect(quickCommands).toBeVisible();
   await expect(quickCommands.getByRole("button", { name: "Open keyboard" })).toBeVisible();
 
+  await expect(quickCommands.getByRole("button", { name: "a", exact: true })).toBeVisible();
+  await quickCommands.getByRole("button", { name: "a", exact: true }).click();
+  await expect(page.locator(".xterm-screen")).toContainText("Permissions");
+  await expect(page.locator(".xterm-screen")).toContainText("Git");
+  await expect(page.locator(".xterm-helper-textarea")).not.toBeFocused();
+
   await quickCommands.getByRole("button", { name: "eza", exact: true }).click();
-  await expect(page.locator(".xterm-screen")).toContainText("README.md");
   await expect(page.locator(".xterm-helper-textarea")).not.toBeFocused();
 
   await quickCommands.getByRole("button", { name: "ls", exact: true }).click();
@@ -116,6 +121,21 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
   await page.keyboard.type("eza -la /projects");
   await page.keyboard.press("Enter");
   await expect(page.locator(".xterm-screen")).toContainText("Permissions");
+  await page.keyboard.type("a /projects");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".xterm-screen")).toContainText("Owner");
+  await expect(page.locator(".xterm-screen")).toContainText("Git");
+  const aRow = page.locator(".xterm-rows > div").filter({ hasText: "lemma.txt" }).last();
+  await expect(aRow).toContainText("lemma.txt");
+  await page.evaluate(() => {
+    (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
+  });
+  const aRowText = await aRow.textContent() ?? "";
+  const aFilenameOffset = aRowText.indexOf("lemma.txt");
+  const aRowBox = await aRow.boundingBox();
+  expect(aRowBox).not.toBeNull();
+  await page.mouse.click(aRowBox!.x + characterWidth * (aFilenameOffset + 4), aRowBox!.y + aRowBox!.height / 2);
+  await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 });
 
 test("same-origin relative terminal links open safely", async ({ page }) => {

@@ -31,6 +31,11 @@ This repository groups the current website-related sources into one place.
   - `apps/cv-site`: `npm run dev`, `npm run lint`, `npm test`, `npm run build`
   - `apps/legacy_rewored`: `npm run dev`, `npm run build`
 
+
+## Browser terminal listings
+
+The main site's browser terminal includes `a`, a discoverable eza-style long listing preset equivalent to `eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto`. It only reads the in-memory virtual filesystem. Optional owner, group, and Git status values are typed VFS metadata fixtures; missing values render as unavailable, and no host filesystem or repository state is read. URL-backed VFS entries use clickable OSC-8 links; entries without URLs remain unlinked. Native eza behavior that depends on a real filesystem, Git worktree, terminal capabilities, or installed icon fonts is not simulated.
+
 ## CI
 
 - GitHub Actions now runs type-checking for `apps/main`, lint/tests for `apps/cv-site`, a build for `apps/legacy_rewored`, and a full unified build that verifies the cross-app integration path.
