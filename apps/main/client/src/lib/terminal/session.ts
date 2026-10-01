@@ -11,16 +11,23 @@ export interface TerminalSessionState {
   error?: Error;
 }
 
+export interface VisitorCommandOptions {
+  focus?: boolean;
+}
+export type TerminalSessionInput =
+  | { owner: "legacy-shell-key-events" }
+  | { owner: "session-byte-stream"; sendBytes(bytes: Uint8Array): void };
+
 /** Owns terminal input, output, command readiness, and teardown for one terminal instance. */
 export interface TerminalSession {
-  readonly inputOwner: "legacy-shell-key-events" | "session-byte-stream";
+  readonly input: TerminalSessionInput;
   start(): Promise<void>;
   subscribeOutput(listener: (output: TerminalOutput) => void): () => void;
   getState(): TerminalSessionState;
   subscribeState(listener: (state: TerminalSessionState) => void): () => void;
   resize(columns: number, rows: number): void;
   setLanguage(language: Language): void;
-  runVisitorCommand(command: VisitorCommand): boolean;
+  runVisitorCommand(command: VisitorCommand, options?: VisitorCommandOptions): boolean;
   dispose(): void;
 }
 

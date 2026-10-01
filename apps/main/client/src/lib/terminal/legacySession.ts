@@ -2,25 +2,25 @@ import { Shell } from "../shell";
 import { VirtualFileSystem } from "../vfs";
 import type { Language } from "@/data/home";
 import type { Terminal } from "@xterm/xterm";
-import { CLEAR_TERMINAL_OUTPUT, type LegacyTerminalSessionOptions, type TerminalOutput, type TerminalSession, type TerminalSessionState, type VisitorCommand } from "./session";
+import { CLEAR_TERMINAL_OUTPUT, type LegacyTerminalSessionOptions, type TerminalOutput, type TerminalSession, type TerminalSessionInput, type TerminalSessionState, type VisitorCommand, type VisitorCommandOptions } from "./session";
 
-const VISITOR_COMMANDS: Record<VisitorCommand, string> = {
-  tour: "tour",
-  plugins: "plugins",
-  links: "links",
-  "open cv.txt": "open cv.txt",
-  projects: "projects",
-  contact: "contact",
-  "copy-contact": "copy-contact",
-  github: "github",
-  a: "a",
-  ls: "ls",
-  eza: "eza",
-  clear: "clear",
-};
+const VISITOR_COMMANDS = new Map<string, string>([
+  ["tour", "tour"],
+  ["plugins", "plugins"],
+  ["links", "links"],
+  ["open cv.txt", "open cv.txt"],
+  ["projects", "projects"],
+  ["contact", "contact"],
+  ["copy-contact", "copy-contact"],
+  ["github", "github"],
+  ["a", "a"],
+  ["ls", "ls"],
+  ["eza", "eza"],
+  ["clear", "clear"],
+]);
 
 export class LegacyTerminalSession implements TerminalSession {
-  readonly inputOwner = "legacy-shell-key-events" as const;
+  readonly input: TerminalSessionInput = { owner: "legacy-shell-key-events" };
   private readonly terminal: Terminal;
   private readonly outputs = new Set<(output: TerminalOutput) => void>();
   private readonly stateListeners = new Set<(state: TerminalSessionState) => void>();
@@ -29,11 +29,16 @@ export class LegacyTerminalSession implements TerminalSession {
   private shell: Shell | null = null;
   private vfs: VirtualFileSystem | null = null;
 
+
   constructor(private readonly options: LegacyTerminalSessionOptions) {
     this.onStateChange = options.onStateChange;
     const publish = (output: TerminalOutput) => {
+      if (this.isDisposed()) return;
       options.onOutput?.(output);
-      this.outputs.forEach((listener) => listener(output));
+      if (this.isDisposed()) return;
+      this.outputs.forEach((listener) => {
+        if (!this.isDisposed()) listener(output);
+      });
     };
     this.terminal = new Proxy(options.terminal, {
       get(target, property, receiver) {
@@ -50,19 +55,39 @@ export class LegacyTerminalSession implements TerminalSession {
     if (this.state.status !== "idle") return;
     const vfs = new VirtualFileSystem(this.options.language);
     this.vfs = vfs;
-    this.shell = new Shell(this.terminal, vfs, {
-      onBusyChange: (busy) => this.setState({ status: busy ? "busy" : "ready" }),
-    });
-    this.setState({ status: "ready" });
+    try {
+      const shell = new Shell(this.terminal, vfs, {
+        isSessionActive: () => !this.isDisposed(),
+        onBusyChange: (busy) => this.setState({ status: busy ? "busy" : "ready" }),
+      });
+      this.shell = shell;
+      if (this.isDisposed()) {
+        shell.dispose();
+        this.shell = null;
+        this.vfs = null;
+        return;
+      }
+      this.setState({ status: "ready" });
+    } catch (cause) {
+      this.shell?.dispose();
+      this.shell = null;
+      this.vfs = null;
+      if (!this.isDisposed()) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        this.setState({ status: "failed", error });
+      }
+      throw cause;
+    }
   }
 
   setLanguage(language: Language): void {
-    if (!this.vfs || this.state.status === "disposed") return;
+    if (!this.vfs || (this.state.status !== "ready" && this.state.status !== "busy")) return;
     this.vfs.setLang(language);
     this.shell?.updateVfs(this.vfs);
   }
 
   subscribeOutput(listener: (output: TerminalOutput) => void): () => void {
+    if (this.isDisposed()) return () => undefined;
     this.outputs.add(listener);
     return () => this.outputs.delete(listener);
   }
@@ -72,6 +97,7 @@ export class LegacyTerminalSession implements TerminalSession {
   }
 
   subscribeState(listener: (state: TerminalSessionState) => void): () => void {
+    if (this.isDisposed()) return () => undefined;
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
   }
@@ -80,26 +106,41 @@ export class LegacyTerminalSession implements TerminalSession {
     // FitAddon resizes the legacy xterm surface; no remote process needs a size update.
   }
 
-  runVisitorCommand(command: VisitorCommand): boolean {
-    const legacyCommand = VISITOR_COMMANDS[command];
-    if (!legacyCommand || this.state.status !== "ready") return false;
-    return this.shell?.submitCommand(legacyCommand) ?? false;
+  runVisitorCommand(command: VisitorCommand, options?: VisitorCommandOptions): boolean {
+    if (typeof command !== "string" || this.state.status !== "ready") return false;
+    const legacyCommand = VISITOR_COMMANDS.get(command);
+    if (!legacyCommand) return false;
+    return this.shell?.submitCommand(legacyCommand, options?.focus ?? true) ?? false;
   }
 
   dispose(): void {
-    if (this.state.status === "disposed") return;
-    this.shell?.dispose();
+    if (this.isDisposed()) return;
+    const state: TerminalSessionState = { status: "disposed" };
+    const shell = this.shell;
+    this.state = state;
     this.shell = null;
     this.vfs = null;
     this.outputs.clear();
-    this.setState({ status: "disposed" });
-    this.stateListeners.clear();
+    try {
+      shell?.dispose();
+      this.onStateChange?.(state);
+      this.stateListeners.forEach((listener) => listener(state));
+    } finally {
+      this.stateListeners.clear();
+    }
+  }
+
+  private isDisposed(): boolean {
+    return this.state.status === "disposed";
   }
 
   private setState(state: TerminalSessionState): void {
-    if (this.state.status === "disposed") return;
+    if (this.isDisposed()) return;
     this.state = state;
     this.onStateChange?.(state);
-    this.stateListeners.forEach((listener) => listener(state));
+    if (this.state !== state) return;
+    this.stateListeners.forEach((listener) => {
+      if (this.state === state) listener(state);
+    });
   }
 }

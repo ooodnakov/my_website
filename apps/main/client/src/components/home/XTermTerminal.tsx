@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import { Language } from '@/data/home';
 import { LegacyTerminalSession } from '@/lib/terminal/legacySession';
+import { bindTerminalInput } from '@/lib/terminal/input';
 import type { TerminalSession, VisitorCommand } from '@/lib/terminal/session';
 import { terminalTheme } from '@/lib/terminal/theme';
 import { isSafeTerminalLink } from '@/lib/terminal/links';
@@ -22,7 +23,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   const terminalRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
-
+  const [startupFailed, setStartupFailed] = useState(false);
   useImperativeHandle(ref, () => ({
     runCommand: (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command) ?? false,
   }), []);
@@ -66,21 +67,27 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
 
     termInstanceRef.current = term;
 
+    let disposed = false;
     const session = new LegacyTerminalSession({ terminal: term, language: lang });
     sessionRef.current = session;
     const unsubscribeOutput = session.subscribeOutput((output) => {
       if (typeof output === "string" || output instanceof Uint8Array) term.write(output);
       else term.clear();
     });
-    void session.start();
+    const inputBinding = bindTerminalInput(term, session.input);
+    void session.start().catch(() => {
+      if (!disposed && sessionRef.current === session && session.getState().status === 'failed') setStartupFailed(true);
+    });
 
     let resizeFrame = 0;
     const handleResize = () => {
+      if (disposed) return;
       cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
-        if (!terminalRef.current?.isConnected) return;
-        fitAddon.fit();
-        session.resize(term.cols, term.rows);
+        if (!disposed && terminalRef.current?.isConnected) {
+          fitAddon.fit();
+          session.resize(term.cols, term.rows);
+        }
       });
     };
     const resizeObserver = new ResizeObserver(handleResize);
@@ -89,10 +96,13 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     window.visualViewport?.addEventListener('resize', handleResize);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('resize', handleResize);
       unsubscribeOutput();
+      inputBinding?.dispose();
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
       term.dispose();
@@ -105,7 +115,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     sessionRef.current?.setLanguage(lang);
   }, [lang]);
 
-  const runMobileCommand = (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command);
+  const runMobileCommand = (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command, { focus: false });
   const focusTerminal = () => {
     termInstanceRef.current?.focus();
     terminalRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -129,6 +139,11 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
           <span aria-hidden="true">⌨</span> {lang === 'ru' ? 'ввод' : 'type'}
         </button>
       </div>
+      {startupFailed && (
+        <p role="alert" className="mt-2 text-sm text-red-300">
+          {lang === 'ru' ? 'Не удалось запустить терминал.' : 'The terminal could not start.'}
+        </p>
+      )}
     </div>
   );
 });

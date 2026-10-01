@@ -9,6 +9,7 @@ import type { CommandRegistry, CommandResult, ShellState } from "./terminal/type
 
 interface ShellOptions {
   onBusyChange?: (busy: boolean) => void;
+  isSessionActive?: () => boolean;
 }
 
 export class Shell {
@@ -25,22 +26,33 @@ export class Shell {
   private isProcessing = false;
   private isDisposed = false;
   private keyListener: { dispose(): void } | null = null;
-  private state: ShellState = { history: [], user: "user", host: "main", branch: "main", shell: "zsh", theme: "powerlevel10k" };
+  private state: ShellState = { history: this.loadHistory(), user: "user", host: "main", branch: "main", shell: "zsh", theme: "powerlevel10k" };
 
   constructor(term: Terminal, vfs: VirtualFileSystem, private readonly options: ShellOptions = {}) {
     this.term = term;
     this.vfs = vfs;
     this.providers = [new BuiltinCommandProvider(builtinCommandDefinitions), new WasmCommandProvider()];
     this.registry = createCommandRegistry(this.providers.flatMap((provider) => provider.commands).filter((definition) => !builtinCommandDefinitions.includes(definition)));
-    this.state.history = this.loadHistory();
-
-    this.writeWelcome();
-    this.prompt();
-    this.setupEventHandlers();
+    try {
+      this.setupEventHandlers();
+      if (!this.isActive()) {
+        this.dispose();
+        return;
+      }
+      this.writeWelcome();
+      if (!this.isActive()) {
+        this.dispose();
+        return;
+      }
+      this.prompt();
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
   }
 
   public updateVfs(vfs: VirtualFileSystem) {
-    if (this.isDisposed) return;
+    if (!this.isActive()) return;
     this.vfs = vfs;
     if (!this.isProcessing) this.redrawInput();
   }
@@ -50,6 +62,9 @@ export class Shell {
     this.isDisposed = true;
     this.keyListener?.dispose();
     this.keyListener = null;
+  }
+  private isActive() {
+    return !this.isDisposed && (this.options.isSessionActive?.() ?? true);
   }
 
 
@@ -68,8 +83,11 @@ export class Shell {
           "\x1b[38;5;246mQuick start: tour, links, cv, projects, contact. Tab completes. Ctrl+R searches history.\x1b[0m",
           "\x1b[38;5;246mTip: open cv.txt opens the interactive CV.\x1b[0m",
         ];
-    lines.forEach((line) => this.term.writeln(line));
-    this.term.writeln("");
+    for (const line of lines) {
+      if (!this.isActive()) return;
+      this.term.writeln(line);
+    }
+    if (this.isActive()) this.term.writeln("");
   }
 
   private loadHistory(): string[] {
@@ -135,7 +153,7 @@ export class Shell {
   }
 
   public submitCommand(input: string, focus = true): boolean {
-    if (this.isDisposed || this.isProcessing) return false;
+    if (!this.isActive() || this.isProcessing) return false;
     if (this.reverseSearch) {
       this.finishReverseSearch(false);
     }
@@ -145,13 +163,13 @@ export class Shell {
     this.currentInput = "";
     this.cursor = 0;
     this.runCommand(submitted);
-    if (focus) this.term.focus();
+    if (focus && this.isActive()) this.term.focus();
     return true;
   }
 
   private setupEventHandlers() {
     this.keyListener = this.term.onKey(({ key, domEvent }) => {
-      if (this.isDisposed || this.isProcessing) return;
+      if (!this.isActive() || this.isProcessing) return;
       const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1;
 
       if (this.reverseSearch) return this.handleReverseSearchKey(key, domEvent);
@@ -320,11 +338,18 @@ export class Shell {
 
   private applyCommandResult(result: CommandResult) {
     if (result.clear) this.term.clear();
-    result.lines?.forEach((line) => this.term.writeln(line.replace(/\n/g, "\r\n")));
-    if (result.openUrl && typeof window !== "undefined") window.open(result.openUrl, "_blank", "noopener,noreferrer");
+    for (const line of result.lines ?? []) {
+      if (!this.isActive()) return;
+      this.term.writeln(line.replace(/\n/g, "\r\n"));
+    }
+    if (this.isActive() && result.openUrl && typeof window !== "undefined") {
+      window.open(result.openUrl, "_blank", "noopener,noreferrer");
+    }
+
   }
 
   private async runCommand(input: string) {
+    if (!this.isActive()) return;
     if (!input) {
       this.prompt();
       return;
@@ -345,6 +370,7 @@ export class Shell {
     this.historyIndex = -1;
     this.isProcessing = true;
     this.options.onBusyChange?.(true);
+    if (!this.isActive()) return;
 
     try {
       const parsed = parseCommand(commandLine);
@@ -357,13 +383,13 @@ export class Shell {
         return;
       }
       const result = await provider.execute({ raw: commandLine, parsed, vfs: this.vfs, state: this.state, registry: this.registry });
-      if (!this.isDisposed) this.applyCommandResult(result);
+      if (this.isActive()) this.applyCommandResult(result);
     } catch (error) {
-      if (this.isDisposed) return;
+      if (!this.isActive()) return;
       const message = error instanceof Error ? error.message : "unknown error";
       this.term.writeln(`\x1b[31mError: ${message}\x1b[0m`);
     } finally {
-      if (!this.isDisposed) {
+      if (this.isActive()) {
         this.isProcessing = false;
         this.options.onBusyChange?.(false);
         this.prompt();

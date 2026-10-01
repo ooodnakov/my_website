@@ -27,6 +27,49 @@ test("guided visitor actions run terminal commands", async ({ page }) => {
   await expect(page.locator(".xterm-screen")).toContainText("open lemma.txt");
 });
 
+test("palette remains open and reports busy while an accepted command is pending", async ({ page }) => {
+  await page.addInitScript(() => {
+    type ClipboardWindow = Window & {
+      __clipboardStarted?: boolean;
+      __resolveClipboardWrite?: () => void;
+    };
+    const testWindow = window as ClipboardWindow;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => new Promise<void>((resolve) => {
+          testWindow.__clipboardStarted = true;
+          testWindow.__resolveClipboardWrite = resolve;
+        }),
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /open command palette/i }).click();
+  const palette = page.getByRole("dialog", { name: /command palette/i });
+  await palette.getByRole("button", { name: /run copy-contact in terminal/i }).click();
+  await expect.poll(() => page.evaluate(() => (window as Window & { __clipboardStarted?: boolean }).__clipboardStarted)).toBe(true);
+  await expect(palette).toBeHidden();
+
+  await page.getByRole("button", { name: /open command palette/i }).click();
+  await page.getByRole("dialog", { name: /command palette/i }).getByRole("button", { name: /run tour in terminal/i }).click();
+  await expect(palette).toBeVisible();
+  await expect(page.getByText("Terminal is busy. Please wait.")).toBeVisible();
+
+  await page.evaluate(() => (window as Window & { __resolveClipboardWrite?: () => void }).__resolveClipboardWrite?.());
+  await expect(page.locator(".xterm-screen")).toContainText("Copied contact to clipboard");
+});
+
+test("session updates visitor content after an in-app locale transition", async ({ page }) => {
+  await page.goto("/en");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/ru");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await page.getByRole("button", { name: /Запустить тур в терминале/i }).click();
+  await expect(page.locator(".xterm-screen")).toContainText("Тур");
+});
+
 test("localized metadata updates for routed home pages", async ({ page }) => {
   await page.goto("/ru");
 
@@ -47,6 +90,76 @@ test("copy-contact exposes the primary email", async ({ page }) => {
   await page.keyboard.press("Enter");
 
   await expect(page.locator(".xterm-screen")).toContainText("ooodnakov@yandex.ru");
+});
+test("terminal remount releases viewport listeners and stale resize handlers", async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    type ResizeWindow = Window & {
+      __terminalResizeLifecycle?: {
+        activeCount(): number;
+        frameCount(): number;
+        fireLastHandler(): void;
+      };
+    };
+    const activeListeners = new Set<EventListenerOrEventListenerObject>();
+    const allListeners: EventListenerOrEventListenerObject[] = [];
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (this === viewport && type === "resize" && listener) {
+        activeListeners.add(listener);
+        allListeners.push(listener);
+      }
+      add.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (this === viewport && type === "resize" && listener) activeListeners.delete(listener);
+      remove.call(this, type, listener, options);
+    };
+    let frameCount = 0;
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => {
+      frameCount += 1;
+      return requestFrame(callback);
+    };
+    (window as ResizeWindow).__terminalResizeLifecycle = {
+      activeCount: () => activeListeners.size,
+      frameCount: () => frameCount,
+      fireLastHandler: () => {
+        const listener = allListeners.at(-1);
+        if (typeof listener === "function") listener.call(viewport, new Event("resize"));
+        else listener?.handleEvent(new Event("resize"));
+      },
+    };
+  });
+  const resizeState = () => page.evaluate(() => (window as Window & {
+    __terminalResizeLifecycle: { activeCount(): number; frameCount(): number; fireLastHandler(): void };
+  }).__terminalResizeLifecycle);
+  const setRoute = (path: string) => page.evaluate((route) => {
+    history.pushState({}, "", route);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+
+  await page.goto("/");
+  await expect.poll(async () => (await resizeState()).activeCount()).toBe(1);
+  await setRoute("/__terminal-away");
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(async () => (await resizeState()).activeCount()).toBe(0);
+  const framesBeforeStaleEvent = (await resizeState()).frameCount();
+  (await resizeState()).fireLastHandler();
+  await expect.poll(async () => (await resizeState()).frameCount()).toBe(framesBeforeStaleEvent);
+
+  await setRoute("/ru");
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  await expect.poll(async () => (await resizeState()).activeCount()).toBe(1);
+  const framesBeforeViewportEvent = (await resizeState()).frameCount();
+  await page.evaluate(() => window.visualViewport?.dispatchEvent(new Event("resize")));
+  await expect.poll(async () => (await resizeState()).frameCount()).toBeGreaterThan(framesBeforeViewportEvent);
+
+  await setRoute("/__terminal-away-again");
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(async () => (await resizeState()).activeCount()).toBe(0);
 });
 
 test("terminal accepts typing and exposes reverse-search prompt", async ({ page }) => {
