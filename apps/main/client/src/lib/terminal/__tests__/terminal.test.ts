@@ -7,6 +7,8 @@ import { parseCommand } from "../parser";
 import { isSafeTerminalLink } from "../links";
 import { Shell } from "../../shell";
 import { WasmCommandProvider } from "../wasmCommands";
+import { LegacyTerminalSession } from "../legacySession";
+import { CLEAR_TERMINAL_OUTPUT, type TerminalOutput, type VisitorCommand } from "../session";
 import type { ShellState } from "../types";
 
 const registry = createCommandRegistry();
@@ -275,4 +277,56 @@ const jqResult = await wasmProvider.execute({
 assert.equal(jqResult.exitCode, 0);
 assert.ok(jqResult.lines?.some((line) => line.length > 0));
 
+let keyListenerRegistrations = 0;
+let keyListenerDisposals = 0;
+const sessionTerminal = {
+  write: (_value: string) => undefined,
+  writeln: (_value: string) => undefined,
+  clear: () => undefined,
+  onKey: () => {
+    keyListenerRegistrations += 1;
+    return { dispose: () => { keyListenerDisposals += 1; } };
+  },
+  focus: () => undefined,
+};
+const session = new LegacyTerminalSession({ terminal: sessionTerminal as never, language: "en" });
+const sessionStates: string[] = [];
+const streamedOutput: TerminalOutput[] = [];
+let commandIsBusy = false;
+const commandReady = Promise.withResolvers<void>();
+let expectClearCommand = false;
+let clearIsBusy = false;
+const clearReady = Promise.withResolvers<void>();
+session.subscribeState(({ status }) => {
+  sessionStates.push(status);
+  if (status === "busy") {
+    commandIsBusy = true;
+    if (expectClearCommand) clearIsBusy = true;
+  }
+  if (status === "ready" && commandIsBusy) commandReady.resolve();
+  if (status === "ready" && clearIsBusy) clearReady.resolve();
+});
+session.subscribeOutput((output) => streamedOutput.push(output));
+assert.equal(session.inputOwner, "legacy-shell-key-events");
+assert.equal(session.getState().status, "idle");
+await session.start();
+await session.start();
+assert.equal(session.getState().status, "ready");
+assert.equal(keyListenerRegistrations, 1);
+assert.ok(streamedOutput.some((output) => typeof output === "string" && output.includes("Welcome")));
+assert.equal(session.runVisitorCommand("projects"), true);
+assert.equal(session.getState().status, "busy");
+assert.equal(session.runVisitorCommand("not-allowed" as VisitorCommand), false);
+await commandReady.promise;
+assert.ok(streamedOutput.some((output) => typeof output === "string" && output.includes("lemma.txt")));
+expectClearCommand = true;
+assert.equal(session.runVisitorCommand("clear"), true);
+await clearReady.promise;
+assert.ok(streamedOutput.includes(CLEAR_TERMINAL_OUTPUT));
+session.dispose();
+session.dispose();
+assert.equal(session.getState().status, "disposed");
+assert.equal(keyListenerDisposals, 1);
+assert.equal(session.runVisitorCommand("projects"), false);
+assert.deepEqual(sessionStates, ["ready", "busy", "ready", "busy", "ready", "disposed"]);
 console.log("terminal tests passed");

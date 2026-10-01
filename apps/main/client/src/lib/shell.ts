@@ -7,6 +7,10 @@ import { BuiltinCommandProvider, type TerminalCommandProvider } from "./terminal
 import { WasmCommandProvider } from "./terminal/wasmCommands";
 import type { CommandRegistry, CommandResult, ShellState } from "./terminal/types";
 
+interface ShellOptions {
+  onBusyChange?: (busy: boolean) => void;
+}
+
 export class Shell {
   private term: Terminal;
   private vfs: VirtualFileSystem;
@@ -19,9 +23,11 @@ export class Shell {
   private reverseSearchQuery = "";
   private reverseSearchInitialInput = "";
   private isProcessing = false;
+  private isDisposed = false;
+  private keyListener: { dispose(): void } | null = null;
   private state: ShellState = { history: [], user: "user", host: "main", branch: "main", shell: "zsh", theme: "powerlevel10k" };
 
-  constructor(term: Terminal, vfs: VirtualFileSystem) {
+  constructor(term: Terminal, vfs: VirtualFileSystem, private readonly options: ShellOptions = {}) {
     this.term = term;
     this.vfs = vfs;
     this.providers = [new BuiltinCommandProvider(builtinCommandDefinitions), new WasmCommandProvider()];
@@ -34,9 +40,18 @@ export class Shell {
   }
 
   public updateVfs(vfs: VirtualFileSystem) {
+    if (this.isDisposed) return;
     this.vfs = vfs;
     if (!this.isProcessing) this.redrawInput();
   }
+
+  public dispose() {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+    this.keyListener?.dispose();
+    this.keyListener = null;
+  }
+
 
   private writeWelcome() {
     const isRu = this.vfs.lang === "ru";
@@ -120,7 +135,7 @@ export class Shell {
   }
 
   public submitCommand(input: string, focus = true): boolean {
-    if (this.isProcessing) return false;
+    if (this.isDisposed || this.isProcessing) return false;
     if (this.reverseSearch) {
       this.finishReverseSearch(false);
     }
@@ -135,8 +150,8 @@ export class Shell {
   }
 
   private setupEventHandlers() {
-    this.term.onKey(({ key, domEvent }) => {
-      if (this.isProcessing) return;
+    this.keyListener = this.term.onKey(({ key, domEvent }) => {
+      if (this.isDisposed || this.isProcessing) return;
       const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey && domEvent.key.length === 1;
 
       if (this.reverseSearch) return this.handleReverseSearchKey(key, domEvent);
@@ -329,6 +344,7 @@ export class Shell {
     this.addHistory(commandLine);
     this.historyIndex = -1;
     this.isProcessing = true;
+    this.options.onBusyChange?.(true);
 
     try {
       const parsed = parseCommand(commandLine);
@@ -341,13 +357,17 @@ export class Shell {
         return;
       }
       const result = await provider.execute({ raw: commandLine, parsed, vfs: this.vfs, state: this.state, registry: this.registry });
-      this.applyCommandResult(result);
+      if (!this.isDisposed) this.applyCommandResult(result);
     } catch (error) {
+      if (this.isDisposed) return;
       const message = error instanceof Error ? error.message : "unknown error";
       this.term.writeln(`\x1b[31mError: ${message}\x1b[0m`);
     } finally {
-      this.isProcessing = false;
-      this.prompt();
+      if (!this.isDisposed) {
+        this.isProcessing = false;
+        this.options.onBusyChange?.(false);
+        this.prompt();
+      }
     }
   }
 }

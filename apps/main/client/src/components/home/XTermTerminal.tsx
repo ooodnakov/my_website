@@ -4,9 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
-import { VirtualFileSystem } from '@/lib/vfs';
-import { Shell } from '@/lib/shell';
 import { Language } from '@/data/home';
+import { LegacyTerminalSession } from '@/lib/terminal/legacySession';
+import type { TerminalSession, VisitorCommand } from '@/lib/terminal/session';
 import { terminalTheme } from '@/lib/terminal/theme';
 import { isSafeTerminalLink } from '@/lib/terminal/links';
 
@@ -15,17 +15,16 @@ interface XTermTerminalProps {
 }
 
 export interface XTermTerminalHandle {
-  runCommand: (command: string) => boolean;
+  runCommand: (command: VisitorCommand) => boolean;
 }
 
 export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>(function XTermTerminal({ lang }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const shellRef = useRef<Shell | null>(null);
-  const vfsRef = useRef<VirtualFileSystem | null>(null);
+  const sessionRef = useRef<TerminalSession | null>(null);
   const termInstanceRef = useRef<Terminal | null>(null);
 
   useImperativeHandle(ref, () => ({
-    runCommand: (command: string) => shellRef.current?.submitCommand(command) ?? false,
+    runCommand: (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command) ?? false,
   }), []);
 
   useEffect(() => {
@@ -67,16 +66,21 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
 
     termInstanceRef.current = term;
 
-    // Initialize VFS and Shell
-    const vfs = new VirtualFileSystem(lang);
-    vfsRef.current = vfs;
-    shellRef.current = new Shell(term, vfs);
+    const session = new LegacyTerminalSession({ terminal: term, language: lang });
+    sessionRef.current = session;
+    const unsubscribeOutput = session.subscribeOutput((output) => {
+      if (typeof output === "string" || output instanceof Uint8Array) term.write(output);
+      else term.clear();
+    });
+    void session.start();
 
     let resizeFrame = 0;
     const handleResize = () => {
       cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
-        if (terminalRef.current?.isConnected) fitAddon.fit();
+        if (!terminalRef.current?.isConnected) return;
+        fitAddon.fit();
+        session.resize(term.cols, term.rows);
       });
     };
     const resizeObserver = new ResizeObserver(handleResize);
@@ -88,7 +92,9 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
       cancelAnimationFrame(resizeFrame);
       resizeObserver.disconnect();
       window.removeEventListener('resize', handleResize);
-      window.visualViewport?.removeEventListener('resize', handleResize);
+      unsubscribeOutput();
+      session.dispose();
+      if (sessionRef.current === session) sessionRef.current = null;
       term.dispose();
       termInstanceRef.current = null;
     };
@@ -96,13 +102,10 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
 
   // Update language if it changes
   useEffect(() => {
-    if (vfsRef.current && shellRef.current && vfsRef.current.lang !== lang) {
-        vfsRef.current.setLang(lang);
-        shellRef.current.updateVfs(vfsRef.current);
-    }
+    sessionRef.current?.setLanguage(lang);
   }, [lang]);
 
-  const runMobileCommand = (command: string) => shellRef.current?.submitCommand(command, false);
+  const runMobileCommand = (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command);
   const focusTerminal = () => {
     termInstanceRef.current?.focus();
     terminalRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -119,7 +122,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
         <div ref={terminalRef} className="h-full w-full" />
       </div>
       <div className="terminal-mobile-bar" aria-label={lang === 'ru' ? 'Быстрые команды терминала' : 'Terminal quick commands'}>
-        {['a', 'ls', 'eza', 'links', 'clear'].map((command) => (
+        {(['a', 'ls', 'eza', 'links', 'clear'] as const satisfies readonly VisitorCommand[]).map((command) => (
           <button key={command} type="button" onClick={() => runMobileCommand(command)}>{command}</button>
         ))}
         <button type="button" className="terminal-keyboard-button" onClick={focusTerminal} aria-label={lang === 'ru' ? 'Открыть клавиатуру' : 'Open keyboard'}>

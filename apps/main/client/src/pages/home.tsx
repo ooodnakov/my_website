@@ -3,6 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Language, homeContent } from "@/data/home";
 import { Header, Footer } from "@/components/home";
 import { XTermTerminal, type XTermTerminalHandle } from "@/components/home/XTermTerminal";
+import type { VisitorCommand } from "@/lib/terminal/session";
 import { applyHomeMetadata } from "@/lib/pageMetadata";
 
 interface HomeProps {
@@ -22,8 +23,8 @@ export default function Home({ lang }: HomeProps) {
   const paletteCopy = lang === "ru"
     ? { button: "[палитра]", title: "Командная палитра", hint: "Быстрые команды и ссылки", close: "Закрыть", busy: "Терминал занят. Пожалуйста, подождите." }
     : { button: "[palette]", title: "Command palette", hint: "Fast commands and links", close: "Close", busy: "Terminal is busy. Please wait." };
-  const paletteCommands = useMemo(() => ["tour", "plugins", "links", "open cv.txt", "projects", "contact", "copy-contact", "github"], []);
-  const guidedActions = useMemo(() => lang === "ru"
+  const paletteCommands = useMemo<VisitorCommand[]>(() => ["tour", "plugins", "links", "open cv.txt", "projects", "contact", "copy-contact", "github"], []);
+  const guidedActions = useMemo<Array<{ label: string; command: VisitorCommand }>>(() => lang === "ru"
     ? [
         { label: "тур", command: "tour" },
         { label: "проекты", command: "projects" },
@@ -50,7 +51,7 @@ export default function Home({ lang }: HomeProps) {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [isPaletteOpen]);
 
-  const runPaletteCommand = (command: string) => {
+  const runPaletteCommand = (command: VisitorCommand) => {
     if (terminalRef.current?.runCommand(command)) {
       setPaletteOpen(false);
     } else {
