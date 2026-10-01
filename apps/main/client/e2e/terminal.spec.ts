@@ -161,3 +161,55 @@ test("same-origin relative terminal links open safely", async ({ page }) => {
   await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 2), rowBox!.y + rowBox!.height / 2);
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
 });
+
+for (const lang of ["en", "ru"]) {
+  for (const width of [1280, 320]) {
+    test(`same-origin terminal links open safely: ${lang}, ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/${lang}`);
+      await page.locator(".xterm-helper-textarea").click();
+      await page.keyboard.type("ls /quicklinks");
+      await page.keyboard.press("Enter");
+      const linkedRow = page.locator(".xterm-rows > div").filter({ hasText: "cv.txt" }).last();
+      await expect(linkedRow).toContainText("cv.txt");
+      await page.evaluate(() => {
+        (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink = undefined;
+        window.open = ((url?: string | URL, target?: string, features?: string) => {
+          (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink = [String(url), String(target), String(features)];
+          return null;
+        }) as typeof window.open;
+      });
+      const rowText = await linkedRow.textContent() ?? "";
+      const filenameOffset = rowText.indexOf("cv.txt");
+      const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+      const rowBox = await linkedRow.boundingBox();
+      expect(rowBox).not.toBeNull();
+      await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 2), rowBox!.y + rowBox!.height / 2);
+      await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual([`/cv/${lang}`, "_blank", "noopener,noreferrer"]);
+    });
+  }
+
+  test(`mailto terminal links open safely: ${lang}`, async ({ page }) => {
+    await page.goto(`/${lang}`);
+    await page.locator(".xterm-helper-textarea").click();
+    await page.keyboard.type("ls /contact");
+    await page.keyboard.press("Enter");
+    const filename = lang === "ru" ? "почта.txt" : "mail.txt";
+    const linkedRow = page.locator(".xterm-rows > div").filter({ hasText: filename }).last();
+    await expect(linkedRow).toContainText(filename);
+    await page.evaluate(() => {
+      (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink = undefined;
+      window.open = ((url?: string | URL, target?: string, features?: string) => {
+        (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink = [String(url), String(target), String(features)];
+        return null;
+      }) as typeof window.open;
+    });
+    const rowText = await linkedRow.textContent() ?? "";
+    const offset = rowText.indexOf(filename);
+    const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+    const rowBox = await linkedRow.boundingBox();
+    expect(rowBox).not.toBeNull();
+    await page.mouse.click(rowBox!.x + characterWidth * (offset + 2), rowBox!.y + rowBox!.height / 2);
+    await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
+  });
+}

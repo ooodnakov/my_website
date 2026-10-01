@@ -4,6 +4,7 @@ import { VirtualFileSystem } from "../../vfs";
 import { completeInput } from "../completion";
 import { createCommandRegistry } from "../commands";
 import { parseCommand } from "../parser";
+import { isSafeTerminalLink } from "../links";
 import { Shell } from "../../shell";
 import { WasmCommandProvider } from "../wasmCommands";
 import type { ShellState } from "../types";
@@ -11,6 +12,14 @@ import type { ShellState } from "../types";
 const registry = createCommandRegistry();
 const vfs = new VirtualFileSystem("en");
 const state: ShellState = { history: [], user: "user", host: "main", branch: "main", shell: "zsh", theme: "powerlevel10k" };
+
+const linkBase = "https://example.com/en";
+for (const uri of ["/cv/en", "../cv/ru", "./cv", "#contact", "//example.com/cv/en", "https://external.example/project", "http://external.example", "mailto:user@example.com"]) {
+  assert.equal(isSafeTerminalLink(uri, linkBase), true, uri);
+}
+for (const uri of ["", "javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,test", "file:///etc/passwd", "ftp://example.com", "//external.example/cv", "\\\\external.example/cv", " https://example.com", "java\nscript:alert(1)", "https://[invalid"]) {
+  assert.equal(isSafeTerminalLink(uri, linkBase), false, uri);
+}
 
 assert.deepEqual(parseCommand("open 'cv.txt'").args, ["cv.txt"]);
 assert.equal(parseCommand("  PROJECTS  ").command, "projects");

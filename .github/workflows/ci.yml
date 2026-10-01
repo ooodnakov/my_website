@@ -23,6 +23,21 @@ jobs:
             lockfile: apps/main/pnpm-lock.yaml
             install-all: false
             command: pnpm run check
+          - name: main-terminal
+            node-version: 22
+            working-directory: apps/main
+            lockfile: apps/main/pnpm-lock.yaml
+            install-all: false
+            command: pnpm run test:terminal
+          - name: main-browser
+            node-version: 22
+            working-directory: .
+            lockfile: |
+              apps/main/pnpm-lock.yaml
+              apps/cv-site/pnpm-lock.yaml
+              apps/legacy_rewored/pnpm-lock.yaml
+            install-all: true
+            command: pnpm run test:e2e:production
           - name: cv-lint
             node-version: 22
             working-directory: apps/cv-site
@@ -75,6 +90,11 @@ jobs:
           pnpm --dir apps/main install --frozen-lockfile
           pnpm --dir apps/cv-site install --frozen-lockfile
           pnpm --dir apps/legacy_rewored install --frozen-lockfile
+
+      - name: Install Chromium and Linux browser dependencies
+        if: ${{ matrix.name == 'main-browser' }}
+        working-directory: apps/main
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Run ${{ matrix.name }}
         working-directory: ${{ matrix.working-directory }}

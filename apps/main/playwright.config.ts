@@ -1,19 +1,25 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const production = process.env.PLAYWRIGHT_TEST_PRODUCTION === "1";
+
 export default defineConfig({
   testDir: "./client/e2e",
+  testMatch: production ? ["**/terminal.spec.ts", "**/routes.spec.ts"] : "**/terminal.spec.ts",
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,
+  workers: 2,
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:5000",
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer: {
-    command: "pnpm dev:client --host 127.0.0.1",
+    command: production ? "pnpm start" : "pnpm dev:client --host 127.0.0.1",
     url: "http://127.0.0.1:5000",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
+    env: { PORT: "5000" },
     timeout: 60_000,
   },
   projects: [

@@ -18,18 +18,48 @@ This repository groups the current website-related sources into one place.
 
 ## Running
 
-- Use `docker compose up --build` from the repository root: `/root/website_main/unified-site`
+- Use `docker compose up --build` from the repository root.
 - The compose file now builds from the unified repo and uses `apps/main/Dockerfile`
 
 ## Development
 
-- Root shortcuts are available through `package.json` at the repo root.
-- Run `npm run validate` from `/root/website_main/unified-site` to execute the current shared checks.
-- Run `npm run build` from the repo root to build the unified production bundle through `apps/main`.
-- App-specific commands still live in each app folder:
-  - `apps/main`: `npm run dev`, `npm run check`, `npm run build`
-  - `apps/cv-site`: `npm run dev`, `npm run lint`, `npm test`, `npm run build`
-  - `apps/legacy_rewored`: `npm run dev`, `npm run build`
+Use Node 22 (matching CI; `.nvmrc` is provided) and the pinned pnpm 10.18.3.
+This is not a pnpm workspace: dependencies must be installed in all three apps.
+From the repository root:
+
+```sh
+nvm use                         # if using nvm; otherwise select Node 22
+corepack enable pnpm            # once, if no pnpm shim is available
+pnpm run deps:install            # all app installs, with frozen lockfiles
+pnpm run setup:browser          # install Playwright's matching ARM64/x64 Chromium
+pnpm run validate              # typecheck, CV lint/tests, terminal tests, unified build
+pnpm run test:e2e               # real browser tests against the main Vite client
+pnpm run test:e2e:production    # rebuild, then test Express plus CV/legacy routes
+```
+
+Corepack reads the root `packageManager` pin. Without Corepack, use
+`npx --yes pnpm@10.18.3 run <script>` instead. Do not run `pnpm setup`:
+that is pnpm's shell-configuration command, not this repository's installer.
+For a read-only Node installation, Corepack shims can be placed in a user-writable
+directory with `corepack enable pnpm --install-directory <directory>` and added
+to `PATH` for the current shell only.
+
+Playwright runs two workers, starts/stops its own server on `127.0.0.1:5000`, and
+refuses to reuse another process on that port. Production tests require the
+unified build; Vite alone cannot verify `/cv/` and `/legacy/` integration.
+On a minimal Linux host, browser launch errors naming missing libraries require
+`pnpm --dir apps/main exec playwright install-deps chromium` (administrator
+approval may be needed). Do not replace the browser with a Snap wrapper or skip
+failing tests. On this ARM64 runtime, the bundled Chromium works without a
+system browser override.
+
+If installs fail with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, set
+`NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` on Linux and retry;
+never disable certificate verification. Earlier issue runs reported Vite exit
+139 on Node 24 ARM64; Node 22.22.3 was verified here without that crash, but the
+earlier crash's root cause is not established.
+
+App-specific commands remain under `pnpm --dir apps/<app> run <script>`.
 
 
 ## Browser terminal listings
@@ -38,7 +68,11 @@ The main site's browser terminal includes `a`, a discoverable eza-style long lis
 
 ## CI
 
-- GitHub Actions now runs type-checking for `apps/main`, lint/tests for `apps/cv-site`, a build for `apps/legacy_rewored`, and a full unified build that verifies the cross-app integration path.
+- GitHub Actions runs main TypeScript and terminal tests, CV lint/tests, a
+  legacy build, and a unified build. The browser job installs Chromium and its
+  Linux dependencies, then exercises the production server and localized
+  main/CV/legacy routes. Remote CI is only exercised after these local changes
+  are accepted and pushed.
 
 ## Dockhand deployment
 

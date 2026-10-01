@@ -8,6 +8,7 @@ import { VirtualFileSystem } from '@/lib/vfs';
 import { Shell } from '@/lib/shell';
 import { Language } from '@/data/home';
 import { terminalTheme } from '@/lib/terminal/theme';
+import { isSafeTerminalLink } from '@/lib/terminal/links';
 
 interface XTermTerminalProps {
   lang: Language;
@@ -31,18 +32,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     if (!terminalRef.current) return;
 
     const openSafeLink = (uri: string) => {
-      const hasAllowedScheme = /^(https?:|mailto:)/i.test(uri);
-      let isSameOriginRelative = false;
-
-      if (!/^[a-z][a-z\d+.-]*:/i.test(uri)) {
-        try {
-          isSameOriginRelative = new URL(uri, window.location.href).origin === window.location.origin;
-        } catch {
-          return;
-        }
-      }
-
-      if (!hasAllowedScheme && !isSameOriginRelative) return;
+      if (!isSafeTerminalLink(uri, window.location.href)) return;
       window.open(uri, '_blank', 'noopener,noreferrer');
     };
 
@@ -59,6 +49,9 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
       theme: terminalTheme,
       convertEol: true,
       linkHandler: {
+        // Xterm otherwise discards relative and mailto OSC-8 links before activation.
+        // Every URI still passes through the application's allowlist above.
+        allowNonHttpProtocols: true,
         activate: (_event, uri) => openSafeLink(uri),
       },
     });

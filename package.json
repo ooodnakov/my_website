@@ -1,14 +1,20 @@
 {
   "name": "unified-site",
   "private": true,
+  "packageManager": "pnpm@10.18.3",
   "scripts": {
+    "deps:install": "pnpm --dir apps/main install --frozen-lockfile && pnpm --dir apps/cv-site install --frozen-lockfile && pnpm --dir apps/legacy_rewored install --frozen-lockfile",
+    "setup:browser": "pnpm --dir apps/main exec playwright install chromium",
     "build": "pnpm --dir apps/main build",
     "build:cv": "pnpm --dir apps/cv-site build",
     "build:legacy": "pnpm --dir apps/legacy_rewored build",
     "check": "pnpm --dir apps/main check",
     "lint": "pnpm --dir apps/cv-site lint",
     "test": "pnpm --dir apps/cv-site test",
-    "validate": "pnpm check && pnpm lint && pnpm test && pnpm build",
+    "test:terminal": "pnpm --dir apps/main test:terminal",
+    "test:e2e": "pnpm --dir apps/main test:e2e",
+    "test:e2e:production": "pnpm build && pnpm --dir apps/main test:e2e:production",
+    "validate": "pnpm check && pnpm lint && pnpm test && pnpm test:terminal && pnpm build",
     "docker:build": "docker build -f apps/main/Dockerfile -t unified-site .",
     "docker:preflight": "corepack pnpm@10.18.3 --dir apps/main install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/cv-site install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/legacy_rewored install --frozen-lockfile && corepack pnpm@10.18.3 --dir apps/main build"
   }
