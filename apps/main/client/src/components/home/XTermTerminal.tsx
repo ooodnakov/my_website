@@ -126,7 +126,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
         <div ref={terminalRef} className="h-full w-full" />
       </div>
       <div className="terminal-mobile-bar" aria-label={lang === 'ru' ? 'Быстрые команды терминала' : 'Terminal quick commands'}>
-        {['ls', 'eza', 'links', 'clear'].map((command) => (
+        {['a', 'ls', 'eza', 'links', 'clear'].map((command) => (
           <button key={command} type="button" onClick={() => runMobileCommand(command)}>{command}</button>
         ))}
         <button type="button" className="terminal-keyboard-button" onClick={focusTerminal} aria-label={lang === 'ru' ? 'Открыть клавиатуру' : 'Open keyboard'}>

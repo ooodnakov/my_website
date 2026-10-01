@@ -77,7 +77,121 @@ const modernListing = registry.get("eza")!.execute({ raw: "eza -la /projects", a
 assert.ok(classicListing.lines?.some((line) => line.includes("\x1b]8;;https://")));
 assert.ok(modernListing.lines?.some((line) => line.includes("Permissions")));
 assert.ok(modernListing.lines?.some((line) => line.includes("") || line.includes("")));
-
+assert.equal(registry.get("a")?.name, "a");
+assert.ok(registry.names().includes("a"));
+const listingVfs = new VirtualFileSystem("en");
+const fixtureDir = listingVfs.resolvePath("/")!;
+fixtureDir.children![".hidden"] = { type: "file", name: ".hidden", content: "secret", parent: fixtureDir };
+fixtureDir.children!["-draft"] = { type: "file", name: "-draft", content: "draft", parent: fixtureDir };
+fixtureDir.children!["same.txt"] = { type: "file", name: "same.txt", content: "same", parent: fixtureDir, owner: "alex", group: "alex", gitStatus: "modified" };
+fixtureDir.children!["different.txt"] = { type: "file", name: "different.txt", content: "different", parent: fixtureDir, owner: "alex", group: "writers", gitStatus: "added", url: "https://example.com/file" };
+fixtureDir.children!["with space.txt"] = { type: "file", name: "with space.txt", content: "space", parent: fixtureDir };
+fixtureDir.children!["large.bin"] = { type: "file", name: "large.bin", size: 2 * 1024 * 1024, mtime: "17 Jun 2020", parent: fixtureDir };
+listingVfs.makeDirectory("/empty");
+fixtureDir.children!["conflicted.txt"] = { type: "file", name: "conflicted.txt", content: "conflict", parent: fixtureDir, owner: "alex", group: "editors", gitStatus: "conflicted" };
+const runListing = (line: string, fs = listingVfs) => {
+  const parsed = parseCommand(line);
+  return registry.get(parsed.command)!.execute({ raw: line, args: parsed.args, vfs: fs, state, registry, lang: "en" });
+};
+const defaultListing = runListing("a");
+const expandedListing = runListing("eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto");
+assert.deepEqual(defaultListing.lines, expandedListing.lines);
+const stripTerminalControls = (value: string) => value
+  .replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
+  .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+const visibleNameCount = (listing: { lines?: string[] }, name: string) =>
+  (listing.lines ?? []).filter((line) => stripTerminalControls(line).includes(name)).length;
+assert.equal(visibleNameCount(defaultListing, ".hidden"), 1);
+assert.equal(visibleNameCount(runListing("a -a"), ".hidden"), 1);
+assert.equal(visibleNameCount(runListing("a -aa"), ".hidden"), 1);
+assert.equal(visibleNameCount(runListing("a -a -a"), ".hidden"), 1);
+assert.equal(visibleNameCount(runListing("eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto -a -a"), ".hidden"), 1);
+const noIconListing = runListing("a --no-icons --no-hyperlink");
+const headerNameOffset = stripTerminalControls(noIconListing.lines?.find((line) => stripTerminalControls(line).includes("Permissions")) ?? "").indexOf("Name");
+for (const name of ["same.txt", "different.txt", "conflicted.txt", ".hidden", "README.md"]) {
+  assert.equal(stripTerminalControls(noIconListing.lines?.find((line) => stripTerminalControls(line).includes(name)) ?? "").indexOf(name), headerNameOffset);
+}
+const multipleListing = runListing("a /projects /quicklinks");
+assert.ok(multipleListing.lines?.includes("/projects:"));
+assert.ok(multipleListing.lines?.includes("/quicklinks:"));
+assert.ok(multipleListing.lines?.some((line) => line.includes("lemma.txt")));
+assert.ok(multipleListing.lines?.some((line) => line.includes("cv.txt")));
+const mixedListing = runListing("a /projects /definitely-missing");
+assert.equal(mixedListing.exitCode, 2);
+assert.ok(mixedListing.lines?.some((line) => line.includes("definitely-missing") && line.includes("No such file")));
+const endOfOptionsListing = runListing("a -- -draft /projects");
+assert.ok(endOfOptionsListing.lines?.includes("-draft:"));
+assert.ok(endOfOptionsListing.lines?.includes("/projects:"));
+assert.ok(endOfOptionsListing.lines?.some((line) => line.includes("lemma.txt")));
+for (const invalidMode of [
+  "a --icons definitely-invalid",
+  "a --icons=",
+  "a --icons",
+  "a --icons --no-git",
+  "a --icons=invalid",
+  "a --hyperlink sometimes",
+  "a --hyperlink=",
+  "a --hyperlink",
+  "a --hyperlink=invalid",
+  "a --color-scale definitely-invalid",
+  "a --color-scale=",
+  "a --color-scale",
+  "a --color-scale --no-git",
+  "a --color-scale=invalid",
+]) {
+  assert.equal(runListing(invalidMode).exitCode, 2, invalidMode);
+}
+assert.equal(runListing("a --icons auto --hyperlink automatic --color-scale size,age /projects").exitCode, undefined);
+assert.equal(runListing("a --icons=always --hyperlink=auto --color-scale=all").exitCode, undefined);
+assert.deepEqual(
+  runListing("a /projects").lines,
+  runListing("eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto /projects").lines,
+);
+assert.ok(defaultListing.lines?.some((line) => line.includes("2097152")));
+const headerOnlyListing = runListing("eza -h /projects");
+assert.equal(headerOnlyListing.lines?.[0].replace(/\x1b\[[0-9;]*m/g, ""), "Name");
+assert.ok(!headerOnlyListing.lines?.some((line) => /\b\d+(?:\.\d+)?[KMG]\b/.test(line)));
+assert.ok(completeInput("a", registry, listingVfs).candidates.includes("a"));
+assert.ok(defaultListing.lines?.some((line) => line.includes("Permissions") && line.includes("Owner") && line.includes("Group") && line.includes("Git")));
+assert.ok(defaultListing.lines?.some((line) => line.includes(".hidden")));
+assert.ok(!defaultListing.lines?.some((line) => line.includes("  .  ") || line.includes("  ..  ")));
+assert.ok(defaultListing.lines?.some((line) => line.includes("modified") && line.includes("alex")));
+assert.ok(defaultListing.lines?.some((line) => line.includes("writers") && line.includes("added")));
+assert.ok(defaultListing.lines?.some((line) => line.includes("\x1b[") && line.includes("\x1b]8;;https://example.com/file")));
+const sameGroupLine = defaultListing.lines?.find((line) => line.includes("same.txt")) ?? "";
+const differentGroupLine = defaultListing.lines?.find((line) => line.includes("different.txt")) ?? "";
+assert.ok(!sameGroupLine.includes("\x1b]8;;"));
+assert.ok(defaultListing.lines?.some((line) => line.includes("\x1b[1;31m")));
+assert.ok(defaultListing.lines?.some((line) => line.includes("\x1b[1;33m")));
+assert.ok(runListing("a -a").lines?.some((line) => line.includes(".hidden")));
+assert.ok(runListing('a "with space.txt"').lines?.some((line) => line.includes("with space.txt")));
+assert.ok(runListing("a --icons always --hyperlink auto /projects").lines?.some((line) => line.includes("lemma.txt")));
+assert.ok(!defaultListing.lines?.some((line) => line.includes("untracked") || line.includes("https://") && !line.includes("example.com")));
+const noLinkListing = runListing("a --no-icons --no-hyperlink --no-git");
+assert.ok(noLinkListing.lines?.every((line) => !line.includes("\x1b]8;;") && !line.includes("") && !line.includes("modified")));
+assert.ok(noLinkListing.lines?.some((line) => line.includes("same.txt")));
+assert.match(sameGroupLine, /alex\s+\s+modified/);
+assert.ok(differentGroupLine.includes("writers"));
+assert.ok(defaultListing.lines?.some((line) => line.includes("  -   ")));
+const pathListing = runListing('a "projects"');
+assert.ok(pathListing.lines?.some((line) => line.includes("lemma.txt")));
+assert.ok(runListing("a /projects").lines?.some((line) => line.includes("lemma.txt")));
+assert.ok(runListing("a -- -draft").lines?.some((line) => line.includes("-draft")));
+assert.ok(runListing("a missing-path").lines?.[0].includes("No such file"));
+const emptyListing = runListing("a /empty");
+assert.equal(emptyListing.lines?.length, 1);
+assert.match(emptyListing.lines?.[0] ?? "", /Permissions/);
+assert.ok(runListing("a /projects/lemma.txt").lines?.some((line) => line.includes("lemma.txt")));
+assert.ok(runListing("a --icons=never --hyperlink=never").lines?.every((line) => !line.includes("\x1b]8;;") && !line.includes("")));
+assert.ok(runListing("a --icons always --hyperlink auto").lines?.some((line) => line.includes("\x1b]8;;")));
+assert.ok(runListing("a --no-git").lines?.every((line) => !line.includes("modified")));
+const aHelp = registry.get("help")!.execute({ raw: "help a", args: ["a"], vfs: listingVfs, state, registry, lang: "en" });
+const aManual = registry.get("man")!.execute({ raw: "man a", args: ["a"], vfs: listingVfs, state, registry, lang: "en" });
+assert.ok(aHelp.lines?.some((line) => line.includes("full eza long-listing preset")));
+assert.ok(aManual.lines?.some((line) => line.includes("color-scale all")));
+assert.ok(completeInput("a /pro", registry, listingVfs).candidates.length > 0);
+assert.equal(registry.get("ll"), registry.get("eza"));
+assert.equal(registry.get("la"), registry.get("eza"));
 const terminalWrites: string[] = [];
 let terminalFocuses = 0;
 const fakeTerminal = {

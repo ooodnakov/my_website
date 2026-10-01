@@ -1,4 +1,4 @@
-import type { CommandContext, CommandDefinition, CommandRegistry } from "./types";
+import type { CommandContext, CommandDefinition, CommandRegistry, CommandResult } from "./types";
 
 const green = (s: string) => `\x1b[1;32m${s}\x1b[0m`;
 const blue = (s: string) => `\x1b[1;34m${s}\x1b[0m`;
@@ -81,6 +81,149 @@ function listNamed(ctx: CommandContext, path: string): string[] {
   });
 }
 
+type EzaOptions = {
+  long: boolean;
+  all: boolean;
+  header: boolean;
+  git: boolean;
+  group: boolean;
+  smartGroup: boolean;
+  icons: boolean;
+  hyperlinks: boolean;
+  colorScale: ("all" | "age" | "size")[];
+  targets: string[];
+};
+
+function parseEzaOptions(args: string[], defaults: Partial<EzaOptions> = {}): EzaOptions | string {
+  const options: EzaOptions = {
+    long: false, all: false, header: false, git: false, group: false,
+    smartGroup: false, icons: true, hyperlinks: true, colorScale: [], targets: [],
+    ...defaults,
+  };
+  let endOptions = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (endOptions) { options.targets.push(arg); continue; }
+    if (arg === "--") { endOptions = true; continue; }
+
+    let valueFlag: "--icons" | "--hyperlink" | "--color-scale" | undefined;
+    let value: string | undefined;
+    if (arg === "--icons" || arg === "--hyperlink" || arg === "--color-scale") {
+      valueFlag = arg;
+      value = args[i + 1];
+      if (value === undefined || value.startsWith("-")) return `eza: option '${arg}' requires a valid value`;
+      i += 1;
+    } else if (arg.startsWith("--icons=") || arg.startsWith("--hyperlink=") || arg.startsWith("--color-scale=")) {
+      const separator = arg.indexOf("=");
+      valueFlag = arg.slice(0, separator) as typeof valueFlag;
+      value = arg.slice(separator + 1);
+      if (!value) return `eza: option '${valueFlag}' requires a valid value`;
+    }
+    if (valueFlag && value !== undefined) {
+      if (valueFlag === "--icons" || valueFlag === "--hyperlink") {
+        if (!["always", "auto", "automatic", "never"].includes(value)) {
+          return `eza: invalid value '${value}' for '${valueFlag}' (expected always, auto, automatic, or never)`;
+        }
+        if (valueFlag === "--icons") options.icons = value !== "never";
+        else options.hyperlinks = value !== "never";
+      } else {
+        const fields: EzaOptions["colorScale"] = [];
+        for (const field of value.split(",")) {
+          if (field !== "all" && field !== "age" && field !== "size") {
+            return `eza: invalid value '${value}' for '--color-scale' (expected all, age, or size)`;
+          }
+          fields.push(field);
+        }
+        options.colorScale = fields;
+      }
+      continue;
+    }
+
+    if (arg === "--git") { options.git = true; continue; }
+    if (arg === "--no-git") { options.git = false; continue; }
+    if (arg === "--smart-group") { options.smartGroup = true; continue; }
+    if (arg === "--no-icons") { options.icons = false; continue; }
+    if (arg === "--no-hyperlink") { options.hyperlinks = false; continue; }
+    if (arg === "--header") { options.header = true; continue; }
+    if (arg.startsWith("-") && arg !== "-") {
+      for (const flag of arg.slice(1)) {
+        if (flag === "l") options.long = true;
+        else if (flag === "a") options.all = true;
+        else if (flag === "h") options.header = true;
+        else if (flag === "g") options.group = true;
+        else return `eza: unknown option '-${flag}'`;
+      }
+      continue;
+    }
+    options.targets.push(arg);
+  }
+  return options;
+}
+
+function scaleColor(value: number): (s: string) => string {
+  return value >= 1024 * 1024 ? (s) => `\x1b[1;31m${s}\x1b[0m`
+    : value >= 1024 ? yellow : green;
+}
+
+function ageColor(mtime: string): (s: string) => string {
+  const age = Date.now() - Date.parse(mtime);
+  return age < 0 || age < 30 * 24 * 60 * 60 * 1000 ? green
+    : age < 365 * 24 * 60 * 60 * 1000 ? yellow
+      : (s) => `\x1b[1;31m${s}\x1b[0m`;
+}
+
+function ezaListingPath(ctx: CommandContext, target: string, options: EzaOptions): CommandResult {
+  const resolved = ctx.vfs.resolvePath(target);
+  if (!resolved) return { lines: [red(`eza: cannot access '${target}': No such file or directory`)], exitCode: 2 };
+  const raw = ctx.vfs.listStats(target);
+  if (typeof raw === "string") return { lines: [red(raw.replace(/^ls:/, "eza:"))], exitCode: 2 };
+  const stats = raw.filter((item) => options.all || !item.name.startsWith("."));
+  const displayName = (item: typeof stats[number]) => {
+    const icon = item.type === "dir" ? "" : item.executable ? "" : item.name.endsWith(".json") ? "" : item.name.endsWith(".md") ? "" : "";
+    const plainName = item.type === "dir" ? `${item.name}/` : item.name;
+    const colored = item.type === "dir" ? blue(plainName) : item.executable ? green(plainName) : cyan(plainName);
+    return `${options.icons ? `${dim(icon)} ` : ""}${link(colored, options.hyperlinks ? item.url : undefined)}`;
+  };
+  const permissionsWidth = Math.max("Permissions".length, ...stats.map((s) => s.mode.length));
+  const sizeWidth = Math.max("Size".length, ...stats.map((s) => String(s.size).length));
+  const modifiedWidth = Math.max("Modified".length, ...stats.map((s) => s.mtime.length));
+  const ownerWidth = Math.max("Owner".length, ...stats.map((s) => (s.owner ?? "-").length));
+  const groupWidth = Math.max("Group".length, ...stats.map((s) => (s.group ?? "-").length));
+  const gitWidth = Math.max("Git".length, ...stats.map((s) => (s.gitStatus ?? "-").length));
+  const headers = ["Permissions", "Size", "Modified", "Owner", ...(options.group ? ["Group"] : []), ...(options.git ? ["Git"] : []), "Name"];
+  const headerLine = `${dim(headers[0].padEnd(permissionsWidth))}  ${dim(headers[1].padStart(sizeWidth))}  ${dim(headers[2].padEnd(modifiedWidth))}  ${dim(headers[3].padEnd(ownerWidth))}${options.group ? `  ${dim(headers[4].padEnd(groupWidth))}` : ""}${options.git ? `  ${dim(headers[options.group ? 5 : 4].padEnd(gitWidth))}` : ""}  ${dim("Name")}`;
+  const output = stats.map((s) => {
+    const group = s.owner && s.group && s.owner === s.group && options.smartGroup ? "" : s.group ?? "-";
+    const scaleSize = options.colorScale.includes("all") || options.colorScale.includes("size");
+    const scaleAge = options.colorScale.includes("all") || options.colorScale.includes("age");
+    const size = String(s.size).padStart(sizeWidth);
+    const scaledSize = scaleSize ? scaleColor(s.size)(size) : size;
+    const modifiedValue = s.mtime.padEnd(modifiedWidth);
+    const modified = scaleAge ? ageColor(s.mtime)(modifiedValue) : modifiedValue;
+    const git = options.git ? s.gitStatus ?? "-" : "";
+    return `${dim(s.mode.padEnd(permissionsWidth))}  ${scaledSize}  ${modified}  ${(s.owner ?? "-").padEnd(ownerWidth)}${options.group ? `  ${group.padEnd(groupWidth)}` : ""}${options.git ? `  ${git.padEnd(gitWidth)}` : ""}  ${displayName(s)}`;
+  });
+  const lines = options.long
+    ? [...(options.header ? [headerLine] : []), ...output]
+    : options.header ? [dim("Name"), stats.map(displayName).join("   ")] : [stats.map(displayName).join("   ")];
+  return { lines };
+}
+
+function ezaListing(ctx: CommandContext, args: string[], defaults: Partial<EzaOptions> = {}): CommandResult {
+  const options = parseEzaOptions(args, defaults);
+  if (typeof options === "string") return { lines: [red(options)], exitCode: 2 };
+  const targets = options.targets.length ? options.targets : ["."];
+  const lines: string[] = [];
+  let exitCode: number | undefined;
+  for (const target of targets) {
+    if (targets.length > 1) lines.push(`${target}:`);
+    const listing = ezaListingPath(ctx, target, options);
+    lines.push(...(listing.lines ?? []));
+    if (listing.exitCode) exitCode = listing.exitCode;
+  }
+  return { lines, exitCode };
+}
+
 export const builtinCommandDefinitions: CommandDefinition[] = [
   { name: "start", aliases: ["guide"], category: "session", summary: "Show quick-start suggestions", usage: "start", execute: (ctx) => ({ lines: copy[ctx.lang].start }) },
   { name: "tour", category: "session", summary: "Take a guided portfolio tour", usage: "tour", examples: ["tour"], execute: (ctx) => ({ lines: copy[ctx.lang].tour }) },
@@ -125,22 +268,11 @@ export const builtinCommandDefinitions: CommandDefinition[] = [
     if (long) return { lines: stats.map((s) => `${s.mode} ${String(s.size).padStart(5)} ${s.mtime} ${classicName(s)}`) };
     return { lines: [stats.map(classicName).join("  ")] };
   } },
-  { name: "eza", aliases: ["ll", "la"], category: "filesystem", summary: "List files with icons and metadata", usage: "eza [-la] [dir]", examples: ["eza", "ll projects"], execute: (ctx) => {
-    const long = ["ll", "la"].includes(ctx.raw.trim().split(/\s+/)[0]) || ctx.args.some((arg) => arg.startsWith("-") && /[la]/.test(arg));
-    const target = ctx.args.find((arg) => !arg.startsWith("-")) || ".";
-    const stats = ctx.vfs.listStats(target);
-    if (typeof stats === "string") return { lines: [red(stats.replace(/^ls:/, "eza:"))] };
-    const modernName = (s: (typeof stats)[number]) => {
-      const icon = s.type === "dir" ? "" : s.executable ? "" : s.name.endsWith(".json") ? "" : s.name.endsWith(".md") ? "" : "";
-      const name = s.type === "dir" ? blue(`${s.name}/`) : s.executable ? green(s.name) : cyan(s.name);
-      return `${dim(icon)} ${link(name, s.url)}`;
-    };
-    if (!long) return { lines: [stats.map(modernName).join("   ")] };
-    return { lines: [
-      dim("Permissions  Size  Modified       Name"),
-      ...stats.map((s) => `${dim(s.mode)}  ${yellow(String(s.size).padStart(4))}  ${dim(s.mtime)}  ${modernName(s)}`),
-    ] };
+  { name: "eza", aliases: ["ll", "la"], category: "filesystem", summary: "List files with icons and metadata", usage: "eza [-la] [path]", examples: ["eza", "ll projects"], execute: (ctx) => {
+    const long = ["ll", "la"].includes(ctx.raw.trim().split(/\s+/)[0]) || ctx.args.some((arg) => /^-[^-]/.test(arg) && /[la]/.test(arg));
+    return ezaListing(ctx, ctx.args, { long, header: long });
   } },
+  { name: "a", category: "filesystem", summary: "List files with the full eza long-listing preset", usage: "a [eza options] [path...]", description: "Lists the browser-only virtual filesystem using `eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto` defaults. Additional arguments follow these defaults and may override icons, hyperlinks, or Git display. Paths may be quoted; use -- before a path beginning with a dash. Ownership and Git data are optional virtual metadata, never host filesystem or repository state.", examples: ["a", "a projects", "a --no-icons --no-hyperlink /projects", "a -- '-drafts'"], execute: (ctx) => ezaListing(ctx, ctx.args, { long: true, all: true, header: true, git: true, colorScale: ["all"], group: true, smartGroup: true, icons: true, hyperlinks: true }) },
   { name: "tree", category: "filesystem", summary: "Print recursive directory tree", usage: "tree [dir]", execute: (ctx) => {
     const start = ctx.args[0] || ".";
     const walked = ctx.vfs.walk(start);
