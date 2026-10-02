@@ -32,7 +32,7 @@ The script builds and runs an ephemeral local ARM64 builder image, then copies o
 ./tools/browser-os/build.sh /absolute/path/to/browser-os-output
 ```
 
-Network access is used only by the ephemeral builder to fetch the SHA-256-verified Alpine minirootfs, exact-version APKs, the pinned Alpine aports recipe snapshots and source inputs, pinned public v86/SeaBIOS sources, and the integrity-verified npm package. The final v86 options do not specify a network device or relay.
+Network access is used only by the ephemeral builder to fetch the SHA-256-verified Alpine minirootfs, exact-version APKs, the pinned Alpine aports recipe snapshots from the official GitHub mirror (the inventory records the canonical GitLab repository and exact commits), pinned public v86/SeaBIOS sources, and the integrity-verified npm package. The final v86 options do not specify a network device or relay.
 
 ## Asset contract and production handoff
 

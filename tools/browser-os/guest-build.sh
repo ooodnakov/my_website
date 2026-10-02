@@ -46,7 +46,9 @@ while IFS= read -r package; do
 done < /usr/local/share/browser-os/packages.lock
 $PROOT_NET /sbin/apk --no-scripts add "$@"
 APORTS_SOURCE="$WORK/aports"
-git clone --filter=blob:none --no-checkout https://gitlab.alpinelinux.org/alpine/aports.git "$APORTS_SOURCE"
+# GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
+APORTS_MIRROR=https://github.com/alpinelinux/aports.git
+git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
