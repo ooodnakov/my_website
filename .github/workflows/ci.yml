@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   app-checks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.name == 'main-browser' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +90,26 @@ jobs:
           pnpm --dir apps/main install --frozen-lockfile
           pnpm --dir apps/cv-site install --frozen-lockfile
           pnpm --dir apps/legacy_rewored install --frozen-lockfile
+
+      - name: Test browser OS metadata parsers
+        if: ${{ matrix.name == 'main-browser' }}
+        run: python3 -m unittest discover -s tools/browser-os -p 'test_*.py' -v
+
+      - name: Generate pinned browser OS production assets
+        if: ${{ matrix.name == 'main-browser' }}
+        run: ./tools/browser-os/build.sh
+
+      - name: Install browser OS smoke dependencies
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir tools/browser-os install --frozen-lockfile
+
+      - name: Boot generated browser OS guest
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir tools/browser-os smoke -- --node
+
+      - name: Build production application
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir apps/main build
 
       - name: Install Chromium and Linux browser dependencies
         if: ${{ matrix.name == 'main-browser' }}
