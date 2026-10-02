@@ -8,6 +8,7 @@
 - Distro: Alpine Linux `3.24.2`, i386 minirootfs SHA-256 `757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226`.
 - The builder image starts from Alpine 3.24 ARM64 image digest `sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6`; builder packages are version-pinned in `Dockerfile`. Guest package roots are exact-pinned in `packages.lock`; the generated inventory records all 75 installed packages with exact recipe-version matches and immutable APKBUILD/source-material references.
 - The guest rootfs follows the upstream Alpine/9p build at the pinned v86 commit: `linux-virt`, `mkinitfs -F "base virtio 9p"`, 9p JSON plus SHA-256-addressed Zstandard blobs. `mkinitfs` writes to a container-private tmpfs; `normalize-initramfs.py` zeros only newc host `c_devmajor`/`c_devminor` metadata and keeps guest `rdevmajor`/`rdevminor` device semantics unchanged. Kernel and initrd are separate files; no disk image or old demo ISO is used.
+- The image explicitly creates a locked `visitor` account with UID/GID 1000, `/home/visitor`, and `/bin/zsh`; the serial autologin runs this nonroot account. The real guest smoke checks these passwd/group fields, home ownership, and effective shell identity.
 - ARM64 builds use an ordinary `linux/arm64` Docker container with `qemu-i386` and `proot -0 -q qemu-i386`. This is explicit userspace emulation: no binfmt registration, privileged container, added capability, weakened seccomp, host package installation, or host credential mount. The rootfs deliberately omits Alpine's `busybox-suid` package because PRoot cannot preserve its setuid helper; this guest has no need for that helper.
 - Upstream `copy-to-sha256.py` expects Python's optional `compression.zstd` module on Python 3.14. Alpine's pinned Python does not provide it; `python-zstd-fallback.patch` falls back to pinned `py3-zstandard` without changing upstream's preferred built-in path.
 - The zsh completion index is generated at build time and loaded with `compinit -C`; interactive startup does not scan the lazy 9p-mounted completion tree.
@@ -17,6 +18,12 @@ The reproducible command for the ARM64 builder is:
 ```sh
 ./tools/browser-os/build.sh
 ```
+
+## Canonical portfolio export
+
+`build.sh` runs `export-portfolio.mjs` from the repository's pinned Node runtime and passes its temporary output into the guest builder. The exporter imports `apps/main/client/src/data/home/index.ts`; it does not maintain a second copy of the portfolio strings. It emits matching English and Russian JSON/text views plus stable, validated action IDs for canonical links. The generated portfolio tree is root-owned and read-only in the guest. `/site.json` is the compatibility path for the selected locale, while `/home/visitor` remains the separate writable workspace.
+
+On exit, `build.sh` restores write permission only within its private staging tree before removing it; the copied guest portfolio remains read-only.
 
 To verify initramfs reproducibility across two separate staging filesystems, run:
 

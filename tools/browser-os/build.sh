@@ -12,13 +12,33 @@ fi
 
 IMAGE=local/browser-os-builder:alpine-3.24.2-v86-0.5.469
 CONTAINER=browser-os-build-$$
+INPUT=$(mktemp -d)
 
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  if [ -d "$INPUT/portfolio" ]; then
+    if ! chmod -R u+w "$INPUT/portfolio"; then
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
+  if ! rm -rf "$INPUT"; then
+    [ "$status" -ne 0 ] || status=1
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+node --experimental-strip-types "$ROOT/tools/browser-os/export-portfolio.mjs" "$INPUT/portfolio"
 docker build --platform linux/arm64 \
   --file "$ROOT/tools/browser-os/Dockerfile" \
   --tag "$IMAGE" \
   "$ROOT/tools/browser-os"
 docker create --platform linux/arm64 --tmpfs /tmp/browser-os-initramfs:rw,exec,nosuid,size=256m --name "$CONTAINER" "$IMAGE" >/dev/null
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
-trap cleanup EXIT HUP INT TERM
+docker cp "$INPUT/portfolio" "$CONTAINER:/input/"
 docker start --attach "$CONTAINER"
 docker cp "$CONTAINER:/out/." "$OUTPUT/"

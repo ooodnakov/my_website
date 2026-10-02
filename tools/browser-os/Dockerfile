@@ -10,8 +10,10 @@ RUN apk add --no-cache \
     tar=1.35-r5 \
     wget=1.25.0-r3 \
     zstd=1.5.7-r2
+RUN mkdir -p /input
 
 COPY packages.lock /usr/local/share/browser-os/packages.lock
+COPY guest/ /usr/local/share/browser-os/guest/
 COPY python-zstd-fallback.patch /usr/local/share/browser-os/
 COPY guest-build.sh manifest.py source_provenance.py normalize-initramfs.py /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/guest-build.sh /usr/local/bin/normalize-initramfs.py

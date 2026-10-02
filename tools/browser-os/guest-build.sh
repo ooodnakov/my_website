@@ -53,11 +53,24 @@ git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
 git -C "$APORTS_SOURCE" checkout --detach "$APORTS_COMMUNITY_COMMIT"
+[ -d /input/portfolio/en ] && [ -d /input/portfolio/ru ] || fail 'canonical portfolio exports are missing'
+mkdir -p "$ROOTFS/portfolio"
+cp -R /input/portfolio/. "$ROOTFS/portfolio/"
+mkdir -p "$ROOTFS/usr/local/bin"
+cp /usr/local/share/browser-os/guest/about /usr/local/share/browser-os/guest/contact /usr/local/share/browser-os/guest/cv /usr/local/share/browser-os/guest/links /usr/local/share/browser-os/guest/projects /usr/local/share/browser-os/guest/tour "$ROOTFS/usr/local/bin/"
 
 $PROOT /bin/sh -ec '
-  adduser -D -u 1000 -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor
   passwd -l root
-  mkdir -p /home/visitor /tmp /run /var/log /portfolio
+  mkdir -p /tmp /run /var/log /portfolio
+  addgroup -g 1000 visitor
+  adduser -D -u 1000 -G visitor -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor
+  # Verify BusyBox adduser -D left the visitor password locked.
+  grep -q "^visitor:!" /etc/shadow || { echo "visitor account password is not locked" >&2; exit 1; }
+  chown -R root:root /portfolio
+  ln -s en /portfolio/current
+  ln -s portfolio/current/site.json /site.json
+  chmod -R a-w /portfolio
+  chmod 0555 /portfolio
   chown -R 1000:1000 /home/visitor
   chmod 0700 /home/visitor
   chmod 1777 /tmp
@@ -84,6 +97,7 @@ Visitor tools: zsh, jq, git, eza, fzf, zoxide.
 EOF
   cat > /home/visitor/.zshrc <<"EOF"
 export LANG=C.UTF-8
+export PATH="/usr/local/bin:$PATH"
 export TERM=xterm-256color
 export HISTFILE=$HOME/.zsh_history
 export HISTSIZE=10000 SAVEHIST=10000

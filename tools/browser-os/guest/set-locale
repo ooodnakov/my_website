@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+if [ "$#" -ne 1 ]; then
+  printf '%s\n' 'usage: set-locale en|ru' >&2
+  exit 2
+fi
+case "$1" in
+  en|ru) ;;
+  *)
+    printf '%s\n' 'set-locale: locale must be en or ru' >&2
+    exit 2
+    ;;
+esac
+exec /usr/local/bin/guestctl locale "$1"

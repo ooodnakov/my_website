@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.18.3",
   "scripts": {
     "smoke": "node smoke.mjs",
-    "test": "node --test smoke-core.test.mjs smoke-http.test.mjs"
+    "test": "node --experimental-strip-types --test smoke-core.test.mjs smoke-http.test.mjs export-portfolio.test.mjs build-cleanup.test.mjs"
   },
   "dependencies": {
     "v86": "0.5.469"
