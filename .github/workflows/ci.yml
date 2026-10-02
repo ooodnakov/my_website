@@ -91,6 +91,10 @@ jobs:
           pnpm --dir apps/cv-site install --frozen-lockfile
           pnpm --dir apps/legacy_rewored install --frozen-lockfile
 
+      - name: Test browser OS metadata parsers
+        if: ${{ matrix.name == 'main-browser' }}
+        run: python3 -m unittest discover -s tools/browser-os -p 'test_*.py' -v
+
       - name: Generate pinned browser OS production assets
         if: ${{ matrix.name == 'main-browser' }}
         run: ./tools/browser-os/build.sh
