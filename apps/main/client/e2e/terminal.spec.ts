@@ -10,12 +10,12 @@ async function clickExpectedTerminalLink(
 ) {
   const screenBounds = await page.locator(".xterm-screen").boundingBox();
   if (!screenBounds) throw new Error("The terminal screen has no browser bounds");
-  const rowIndex = await row.evaluate((element) => Array.prototype.indexOf.call(element.parentElement?.children ?? [], element) as number);
+  const rowBounds = await row.boundingBox();
+  if (!rowBounds) throw new Error("The terminal link row has no browser bounds");
   const cellWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
-  const lineHeight = await page.locator(".xterm").evaluate((element) => Number.parseFloat(getComputedStyle(element).lineHeight));
-  if (rowIndex < 0 || !Number.isFinite(cellWidth) || !Number.isFinite(lineHeight)) throw new Error("The terminal grid dimensions are unavailable");
+  if (!Number.isFinite(cellWidth)) throw new Error("The terminal cell width is unavailable");
   const step = Math.max(cellWidth / 2, 1);
-  const y = screenBounds.y + (rowIndex + 0.5) * lineHeight;
+  const y = rowBounds.y + rowBounds.height / 2;
   const pointerCursor = page.locator(".xterm-cursor-pointer");
 
   const attempted: string[] = [];
