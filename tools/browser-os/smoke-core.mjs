@@ -71,6 +71,11 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 180000,
 
 
     const identity = await command("IDENTITY", 'printf "__USER__:%s\\n" "$(id -un)"; printf "__ARCH__:%s\\n" "$(uname -m)"; mount', /__USER__:visitor[\s\S]*__ARCH__:i686[\s\S]*9p/);
+    const account = await command("ACCOUNT", `awk -F: '$1 == "visitor" && $3 == 1000 && $4 == 1000 && $6 == "/home/visitor" && $7 == "/bin/zsh" { print "__PASSWD__:" $3 ":" $4 ":" $6 ":" $7; found = 1 } END { exit !found }' /etc/passwd; awk -F: '$1 == "visitor" && $3 == 1000 { print "__GROUP__:" $1 ":" $3; found = 1 } END { exit !found }' /etc/group; test "$(id -u)" = 1000 -a "$(id -g)" = 1000 -a "$HOME" = /home/visitor && printf "__LOGIN__:%s:%s\\n" "$(id -un)" "$(id -u)"; stat -c "__HOME__:%u:%g" /home/visitor`, /__PASSWD__:1000:1000:\/home\/visitor:\/bin\/zsh[\s\S]*__GROUP__:visitor:1000[\s\S]*__LOGIN__:visitor:1000[\s\S]*__HOME__:1000:1000/);
+    const tour = await command("TOUR", "tour", /Commands: about, links, projects, cv, contact/);
+    const commands = tour.split("\n").find(line => line.startsWith("Commands:"));
+    if (commands !== "Commands: about, links, projects, cv, contact") throw new Error("tour advertises unsupported guest commands");
+    assertions.push("tour-lists-installed-readers");
     const writable = await command("WRITABLE", 'test -w /home/visitor -a -w /tmp && printf "__WRITE_OK__\\n"; printf "first\\nsecond\\n" > /tmp/browser-os-smoke; wc -l < /tmp/browser-os-smoke; chmod 640 /tmp/browser-os-smoke; stat -c "__MODE__:%a" /tmp/browser-os-smoke; false; printf "__EXIT__:%s\\n" "$?"', /__WRITE_OK__[\s\S]*2[\s\S]*__MODE__:640[\s\S]*__EXIT__:1/);
     const unicode = await command("UNICODE", 'printf "{\\"title\\":\\"Привет\\"}" | jq -r .title; printf "__UTF8__:Живой гостевой Linux\\n"', /Привет[\s\S]*__UTF8__:Живой гостевой Linux/);
     const tools = await command("TOOLS", `zsh --version; printf '[{"name":"Guest shell"},{"name":"Живой Linux"}]\\n' | jq -r '.[] | .name'; eza --color=never -1 /tmp/browser-os-smoke; git -C /tmp init -q browser-os-git-smoke && git -C /tmp/browser-os-git-smoke config user.name smoke && git -C /tmp/browser-os-git-smoke config user.email smoke@example.invalid && touch /tmp/browser-os-git-smoke/tracked && git -C /tmp/browser-os-git-smoke add tracked && git -C /tmp/browser-os-git-smoke commit -qm smoke && test -z "$(git -C /tmp/browser-os-git-smoke status --porcelain)" && printf "__GIT_COMMIT_OK__\\n"; printf "needle\\nother\\n" | fzf --filter=needle; XDG_DATA_HOME=/tmp/browser-os-zoxide zoxide add /tmp/browser-os-git-smoke && XDG_DATA_HOME=/tmp/browser-os-zoxide zoxide query --list`, /zsh 5\.9[\s\S]*Guest shell[\s\S]*Живой Linux[\s\S]*browser-os-smoke[\s\S]*__GIT_COMMIT_OK__[\s\S]*needle[\s\S]*browser-os-git-smoke/);
@@ -92,6 +97,8 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 180000,
         identity: identity.slice(-1500),
         writable: writable.slice(-1500),
         unicode: unicode.slice(-1000),
+        account: account.slice(-1000),
+        tour: tour.slice(-1000),
         nativeTools: tools.slice(-2000),
         interrupt: interrupt.slice(-1000),
         readyMarker: ready.slice(-500),

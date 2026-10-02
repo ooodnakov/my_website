@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' 'usage: copy-contact' >&2
+  exit 2
+fi
+exec /usr/local/bin/guestctl copy-contact quick-mail
