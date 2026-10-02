@@ -7,6 +7,9 @@ import { parseCommand } from "../parser";
 import { isSafeTerminalLink } from "../links";
 import { Shell } from "../../shell";
 import { WasmCommandProvider } from "../wasmCommands";
+import { LegacyTerminalSession } from "../legacySession";
+import { bindTerminalInput } from "../input";
+import { CLEAR_TERMINAL_OUTPUT, type TerminalOutput, type TerminalSessionInput, type VisitorCommand } from "../session";
 import type { ShellState } from "../types";
 
 const registry = createCommandRegistry();
@@ -275,4 +278,198 @@ const jqResult = await wasmProvider.execute({
 assert.equal(jqResult.exitCode, 0);
 assert.ok(jqResult.lines?.some((line) => line.length > 0));
 
+let sessionTerminalFocuses = 0;
+let keyListenerRegistrations = 0;
+let keyListenerDisposals = 0;
+const sessionTerminal = {
+  write: (_value: string) => undefined,
+  writeln: (_value: string) => undefined,
+  clear: () => undefined,
+  onKey: () => {
+    keyListenerRegistrations += 1;
+    return { dispose: () => { keyListenerDisposals += 1; } };
+  },
+  focus: () => { sessionTerminalFocuses += 1; },
+};
+const session = new LegacyTerminalSession({ terminal: sessionTerminal as never, language: "en" });
+const sessionStates: string[] = [];
+const streamedOutput: TerminalOutput[] = [];
+let commandIsBusy = false;
+const commandReady = Promise.withResolvers<void>();
+let expectClearCommand = false;
+let clearIsBusy = false;
+const clearReady = Promise.withResolvers<void>();
+session.subscribeState(({ status }) => {
+  sessionStates.push(status);
+  if (status === "busy") {
+    commandIsBusy = true;
+    if (expectClearCommand) clearIsBusy = true;
+  }
+  if (status === "ready" && commandIsBusy) commandReady.resolve();
+  if (status === "ready" && clearIsBusy) clearReady.resolve();
+});
+session.subscribeOutput((output) => streamedOutput.push(output));
+assert.equal(session.input.owner, "legacy-shell-key-events");
+assert.equal(session.getState().status, "idle");
+await session.start();
+await session.start();
+assert.equal(session.getState().status, "ready");
+assert.equal(keyListenerRegistrations, 1);
+assert.ok(streamedOutput.some((output) => typeof output === "string" && output.includes("Welcome")));
+assert.equal(session.runVisitorCommand("projects"), true);
+assert.equal(sessionTerminalFocuses, 1);
+assert.equal(session.getState().status, "busy");
+for (const malformed of ["not-allowed", "toString", "constructor", "__proto__", null, undefined, 42, {}, []]) {
+  assert.equal(session.runVisitorCommand(malformed as VisitorCommand), false, String(malformed));
+}
+await commandReady.promise;
+assert.ok(streamedOutput.some((output) => typeof output === "string" && output.includes("lemma.txt")));
+expectClearCommand = true;
+assert.equal(session.runVisitorCommand("clear", { focus: false }), true);
+assert.equal(sessionTerminalFocuses, 1);
+await clearReady.promise;
+assert.ok(streamedOutput.includes(CLEAR_TERMINAL_OUTPUT));
+session.dispose();
+session.dispose();
+assert.equal(session.getState().status, "disposed");
+assert.equal(keyListenerDisposals, 1);
+assert.equal(session.runVisitorCommand("projects"), false);
+assert.deepEqual(sessionStates, ["ready", "busy", "ready", "busy", "ready", "disposed"]);
+let reentrantListenerRegistrations = 0;
+let reentrantListenerDisposals = 0;
+let reentrantOptionOutputs = 0;
+let reentrantSubscriberOutputs = 0;
+const reentrantTerminal = {
+  write: (_value: string) => undefined,
+  writeln: (_value: string) => undefined,
+  clear: () => undefined,
+  onKey: () => {
+    reentrantListenerRegistrations += 1;
+    return { dispose: () => { reentrantListenerDisposals += 1; } };
+  },
+  focus: () => undefined,
+};
+let reentrantSession!: LegacyTerminalSession;
+reentrantSession = new LegacyTerminalSession({
+  terminal: reentrantTerminal as never,
+  language: "en",
+  onOutput: () => { reentrantOptionOutputs += 1; },
+});
+reentrantSession.subscribeOutput(() => {
+  reentrantSubscriberOutputs += 1;
+  reentrantSession.dispose();
+});
+await reentrantSession.start();
+assert.equal(reentrantSession.getState().status, "disposed");
+assert.equal(reentrantListenerRegistrations, 1);
+assert.equal(reentrantListenerDisposals, 1);
+assert.equal(reentrantOptionOutputs, 1);
+assert.equal(reentrantSubscriberOutputs, 1);
+
+let failedListenerRegistrations = 0;
+const failingSession = new LegacyTerminalSession({
+  terminal: {
+    ...reentrantTerminal,
+    onKey: () => {
+      failedListenerRegistrations += 1;
+      throw new Error("injected listener attachment failure");
+    },
+  } as never,
+  language: "en",
+});
+await assert.rejects(failingSession.start(), /injected listener attachment failure/);
+assert.equal(failingSession.getState().status, "failed");
+assert.match(failingSession.getState().error?.message ?? "", /injected listener attachment failure/);
+assert.equal(failingSession.runVisitorCommand("tour"), false);
+assert.equal(failedListenerRegistrations, 1);
+failingSession.dispose();
+
+const clipboardWrite = Promise.withResolvers<void>();
+const clipboardDone = Promise.withResolvers<void>();
+const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+let clipboardWriteStarted = false;
+Object.defineProperty(globalThis, "navigator", {
+  configurable: true,
+  value: { clipboard: { writeText: () => {
+    clipboardWriteStarted = true;
+    return clipboardWrite.promise.then(clipboardDone.resolve);
+  } } },
+});
+let pendingSessionOutputs = 0;
+const pendingSession = new LegacyTerminalSession({
+  terminal: sessionTerminal as never,
+  language: "en",
+  onOutput: () => { pendingSessionOutputs += 1; },
+});
+await pendingSession.start();
+assert.equal(pendingSession.runVisitorCommand("copy-contact"), true);
+assert.equal(pendingSession.getState().status, "busy");
+assert.equal(clipboardWriteStarted, true);
+const acceptedCommandOutputCount = pendingSessionOutputs;
+pendingSession.dispose();
+clipboardWrite.resolve();
+await clipboardDone.promise;
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(pendingSession.getState().status, "disposed");
+assert.equal(pendingSessionOutputs, acceptedCommandOutputCount);
+if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+else Reflect.deleteProperty(globalThis, "navigator");
+
+const textListeners = new Set<(text: string) => void>();
+const binaryListeners = new Set<(binary: string) => void>();
+const retainedTextListeners: Array<(text: string) => void> = [];
+const retainedBinaryListeners: Array<(binary: string) => void> = [];
+let inputListenerDisposals = 0;
+const streamingTerminal = {
+  onData: (listener: (text: string) => void) => {
+    retainedTextListeners.push(listener);
+    textListeners.add(listener);
+    return { dispose: () => { textListeners.delete(listener); inputListenerDisposals += 1; } };
+  },
+  onBinary: (listener: (binary: string) => void) => {
+    retainedBinaryListeners.push(listener);
+    binaryListeners.add(listener);
+    return { dispose: () => { binaryListeners.delete(listener); inputListenerDisposals += 1; } };
+  },
+};
+const sentInput: Uint8Array[] = [];
+const streamingInput: TerminalSessionInput = {
+  owner: "session-byte-stream",
+  sendBytes: (bytes) => sentInput.push(bytes),
+};
+assert.equal(bindTerminalInput(streamingTerminal as never, { owner: "legacy-shell-key-events" }), null);
+assert.equal(textListeners.size + binaryListeners.size, 0);
+const inputBinding = bindTerminalInput(streamingTerminal as never, streamingInput);
+assert.ok(inputBinding);
+assert.equal(textListeners.size, 1);
+assert.equal(binaryListeners.size, 1);
+textListeners.forEach((listener) => listener("я"));
+binaryListeners.forEach((listener) => listener("\x03\xff"));
+assert.deepEqual(Array.from(sentInput[0]), Array.from(new TextEncoder().encode("я")));
+assert.deepEqual(Array.from(sentInput[1]), [3, 255]);
+const sentBeforeDispose = sentInput.length;
+const retainedTextListener = retainedTextListeners[0];
+const retainedBinaryListener = retainedBinaryListeners[0];
+inputBinding.dispose();
+inputBinding.dispose();
+assert.equal(textListeners.size + binaryListeners.size, 0);
+assert.equal(inputListenerDisposals, 2);
+retainedTextListener("late text");
+retainedBinaryListener("late binary");
+assert.equal(sentInput.length, sentBeforeDispose);
+
+let partialTextListener: ((text: string) => void) | undefined;
+let partialDataDisposals = 0;
+const attachmentFailure = new Error("injected binary listener attachment failure");
+assert.throws(() => bindTerminalInput({
+  onData: (listener: (text: string) => void) => {
+    partialTextListener = listener;
+    return { dispose: () => { partialDataDisposals += 1; } };
+  },
+  onBinary: () => { throw attachmentFailure; },
+} as never, streamingInput), (error: unknown) => error === attachmentFailure);
+assert.equal(partialDataDisposals, 1);
+partialTextListener?.("late after failed setup");
+assert.equal(sentInput.length, sentBeforeDispose);
 console.log("terminal tests passed");

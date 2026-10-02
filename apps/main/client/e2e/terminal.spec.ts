@@ -1,4 +1,41 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
+
+async function clickExpectedTerminalLink(
+  page: Page,
+  row: Locator,
+  field: LinkCaptureField,
+  isExpected: (value: string | string[] | undefined) => boolean,
+) {
+  const screenBounds = await page.locator(".xterm-screen").boundingBox();
+  if (!screenBounds) throw new Error("The terminal screen has no browser bounds");
+  const rowBounds = await row.boundingBox();
+  if (!rowBounds) throw new Error("The terminal link row has no browser bounds");
+  const cellWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+  if (!Number.isFinite(cellWidth)) throw new Error("The terminal cell width is unavailable");
+  const step = Math.max(cellWidth / 2, 1);
+  const y = rowBounds.y + rowBounds.height / 2;
+  const pointerCursor = page.locator(".xterm-cursor-pointer");
+
+  const attempted: string[] = [];
+  for (let x = screenBounds.x + step / 2; x < screenBounds.x + screenBounds.width; x += step) {
+    await page.mouse.move(x, y);
+    if (await pointerCursor.count() === 0) continue;
+    await page.mouse.click(x, y);
+    const opened = await page.evaluate((key) => {
+      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
+      return testWindow[key];
+    }, field);
+    if (opened !== undefined) attempted.push(JSON.stringify(opened));
+    if (isExpected(opened)) return;
+    await page.evaluate((key) => {
+      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
+      testWindow[key] = undefined;
+    }, field);
+  }
+  throw new Error(`No link in the terminal row matched ${field}; captures: ${attempted.join(", ") || "none"}`);
+}
 
 test("shortcut strip and command palette expose primary navigation", async ({ page }) => {
   await page.goto("/");
@@ -27,6 +64,52 @@ test("guided visitor actions run terminal commands", async ({ page }) => {
   await expect(page.locator(".xterm-screen")).toContainText("open lemma.txt");
 });
 
+test("palette remains open and reports busy while an accepted command is pending", async ({ page }) => {
+  await page.addInitScript(() => {
+    type ClipboardWindow = Window & {
+      __clipboardStarted?: boolean;
+      __resolveClipboardWrite?: () => void;
+    };
+    const testWindow = window as ClipboardWindow;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => new Promise<void>((resolve) => {
+          testWindow.__clipboardStarted = true;
+          testWindow.__resolveClipboardWrite = resolve;
+        }),
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /open command palette/i }).click();
+  const palette = page.getByRole("dialog", { name: /command palette/i });
+  await palette.getByRole("button", { name: /run copy-contact in terminal/i }).click();
+  await expect.poll(() => page.evaluate(() => (window as Window & { __clipboardStarted?: boolean }).__clipboardStarted)).toBe(true);
+  await expect(palette).toBeHidden();
+
+  await page.getByRole("button", { name: /open command palette/i }).click();
+  await page.getByRole("dialog", { name: /command palette/i }).getByRole("button", { name: /run tour in terminal/i }).click();
+  await expect(palette).toBeVisible();
+  await expect(page.getByText("Terminal is busy. Please wait.", { exact: true })).toBeVisible();
+
+  await page.evaluate(() => (window as Window & { __resolveClipboardWrite?: () => void }).__resolveClipboardWrite?.());
+  await expect(page.locator(".xterm-screen")).toContainText("Copied contact to clipboard");
+});
+
+test("session updates visitor content after an in-app locale transition", async ({ page }) => {
+  await page.goto("/en");
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/ru");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page).toHaveURL(/\/ru$/);
+  await page.getByRole("button", { name: "Запустить tour в терминале" }).click();
+  await expect(page.locator(".xterm-screen")).toContainText("Тур");
+});
+
 test("localized metadata updates for routed home pages", async ({ page }) => {
   await page.goto("/ru");
 
@@ -47,6 +130,84 @@ test("copy-contact exposes the primary email", async ({ page }) => {
   await page.keyboard.press("Enter");
 
   await expect(page.locator(".xterm-screen")).toContainText("ooodnakov@yandex.ru");
+});
+test("terminal remount releases viewport listeners and stale resize handlers", async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    type ResizeWindow = Window & {
+      __terminalResizeLifecycle?: {
+        activeCount(): number;
+        frameCount(): number;
+        fireLastHandler(): void;
+      };
+    };
+    const activeListeners = new Set<EventListenerOrEventListenerObject>();
+    const allListeners: EventListenerOrEventListenerObject[] = [];
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (this === viewport && type === "resize" && listener) {
+        activeListeners.add(listener);
+        allListeners.push(listener);
+      }
+      add.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (this === viewport && type === "resize" && listener) activeListeners.delete(listener);
+      remove.call(this, type, listener, options);
+    };
+    let frameCount = 0;
+    const requestFrame = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => {
+      frameCount += 1;
+      return requestFrame(callback);
+    };
+    (window as ResizeWindow).__terminalResizeLifecycle = {
+      activeCount: () => activeListeners.size,
+      frameCount: () => frameCount,
+      fireLastHandler: () => {
+        const listener = allListeners.at(-1);
+        if (typeof listener === "function") listener.call(viewport, new Event("resize"));
+        else listener?.handleEvent(new Event("resize"));
+      },
+    };
+  });
+  const resizeSnapshot = () => page.evaluate(() => {
+    const lifecycle = (window as Window & {
+      __terminalResizeLifecycle: { activeCount(): number; frameCount(): number };
+    }).__terminalResizeLifecycle;
+    return { activeCount: lifecycle.activeCount(), frameCount: lifecycle.frameCount() };
+  });
+  const setRoute = (path: string) => page.evaluate((route) => {
+    history.pushState({}, "", route);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+
+  await page.goto("/");
+  await expect.poll(async () => (await resizeSnapshot()).activeCount).toBe(1);
+  await setRoute("/__terminal-away");
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(async () => (await resizeSnapshot()).activeCount).toBe(0);
+  const framesBeforeStaleEvent = (await resizeSnapshot()).frameCount;
+  await page.evaluate(() => {
+    (window as Window & {
+      __terminalResizeLifecycle: { fireLastHandler(): void };
+    }).__terminalResizeLifecycle.fireLastHandler();
+  });
+  await expect.poll(async () => (await resizeSnapshot()).frameCount).toBe(framesBeforeStaleEvent);
+
+  await setRoute("/ru");
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  await expect.poll(async () => (await resizeSnapshot()).activeCount).toBe(1);
+  const framesBeforeViewportEvent = (await resizeSnapshot()).frameCount;
+
+  await page.evaluate(() => window.visualViewport?.dispatchEvent(new Event("resize")));
+  await expect.poll(async () => (await resizeSnapshot()).frameCount).toBeGreaterThan(framesBeforeViewportEvent);
+
+  await setRoute("/__terminal-away-again");
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(async () => (await resizeSnapshot()).activeCount).toBe(0);
 });
 
 test("terminal accepts typing and exposes reverse-search prompt", async ({ page }) => {
@@ -110,12 +271,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
       return null;
     }) as typeof window.open;
   });
-  const rowText = await linkedRow.textContent() ?? "";
-  const filenameOffset = rowText.indexOf("lemma.txt");
-  const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
-  const rowBox = await linkedRow.boundingBox();
-  expect(rowBox).not.toBeNull();
-  await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 4), rowBox!.y + rowBox!.height / 2);
+  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 
   await page.keyboard.type("eza -la /projects");
@@ -130,11 +286,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
   await page.evaluate(() => {
     (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
   });
-  const aRowText = await aRow.textContent() ?? "";
-  const aFilenameOffset = aRowText.indexOf("lemma.txt");
-  const aRowBox = await aRow.boundingBox();
-  expect(aRowBox).not.toBeNull();
-  await page.mouse.click(aRowBox!.x + characterWidth * (aFilenameOffset + 4), aRowBox!.y + aRowBox!.height / 2);
+  await clickExpectedTerminalLink(page, aRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 });
 
@@ -153,12 +305,7 @@ test("same-origin relative terminal links open safely", async ({ page }) => {
       return null;
     }) as typeof window.open;
   });
-  const rowText = await linkedRow.textContent() ?? "";
-  const filenameOffset = rowText.indexOf("cv.txt");
-  const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
-  const rowBox = await linkedRow.boundingBox();
-  expect(rowBox).not.toBeNull();
-  await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 2), rowBox!.y + rowBox!.height / 2);
+  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "/cv/en");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
 });
 
@@ -179,12 +326,7 @@ for (const lang of ["en", "ru"]) {
           return null;
         }) as typeof window.open;
       });
-      const rowText = await linkedRow.textContent() ?? "";
-      const filenameOffset = rowText.indexOf("cv.txt");
-      const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
-      const rowBox = await linkedRow.boundingBox();
-      expect(rowBox).not.toBeNull();
-      await page.mouse.click(rowBox!.x + characterWidth * (filenameOffset + 2), rowBox!.y + rowBox!.height / 2);
+      await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === `/cv/${lang}` && value[1] === "_blank" && value[2] === "noopener,noreferrer");
       await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual([`/cv/${lang}`, "_blank", "noopener,noreferrer"]);
     });
   }
@@ -204,12 +346,7 @@ for (const lang of ["en", "ru"]) {
         return null;
       }) as typeof window.open;
     });
-    const rowText = await linkedRow.textContent() ?? "";
-    const offset = rowText.indexOf(filename);
-    const characterWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
-    const rowBox = await linkedRow.boundingBox();
-    expect(rowBox).not.toBeNull();
-    await page.mouse.click(rowBox!.x + characterWidth * (offset + 2), rowBox!.y + rowBox!.height / 2);
+    await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === "mailto:ooodnakov@yandex.ru" && value[1] === "_blank" && value[2] === "noopener,noreferrer");
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
