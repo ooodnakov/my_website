@@ -18,6 +18,7 @@ async function clickExpectedTerminalLink(
   const y = screenBounds.y + (rowIndex + 0.5) * lineHeight;
   const pointerCursor = page.locator(".xterm-cursor-pointer");
 
+  const attempted: string[] = [];
   for (let x = screenBounds.x + step / 2; x < screenBounds.x + screenBounds.width; x += step) {
     await page.mouse.move(x, y);
     if (await pointerCursor.count() === 0) continue;
@@ -26,13 +27,14 @@ async function clickExpectedTerminalLink(
       const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
       return testWindow[key];
     }, field);
+    if (opened !== undefined) attempted.push(JSON.stringify(opened));
     if (isExpected(opened)) return;
     await page.evaluate((key) => {
       const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
       testWindow[key] = undefined;
     }, field);
   }
-  throw new Error(`No link in the terminal row matched ${field}`);
+  throw new Error(`No link in the terminal row matched ${field}; captures: ${attempted.join(", ") || "none"}`);
 }
 
 test("shortcut strip and command palette expose primary navigation", async ({ page }) => {
