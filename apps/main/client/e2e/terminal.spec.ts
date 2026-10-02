@@ -1,48 +1,38 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-async function clickTerminalText(page: Page, rows: Locator, text: string) {
-  const point = await rows.evaluate((element, target) => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    const textNodes: Node[] = [];
-    let node = walker.nextNode();
-    while (node) {
-      textNodes.push(node);
-      node = walker.nextNode();
-    }
-    const content = textNodes.map((textNode) => textNode.textContent ?? "").join("");
-    const start = content.lastIndexOf(target);
-    if (start < 0) return null;
-    const end = start + target.length;
-    let offset = 0;
-    let startNode: Node | null = null;
-    let startOffset = 0;
-    let endNode: Node | null = null;
-    let endOffset = 0;
-    for (const textNode of textNodes) {
-      const length = textNode.textContent?.length ?? 0;
-      if (!startNode && start <= offset + length) {
-        startNode = textNode;
-        startOffset = start - offset;
-      }
-      if (!endNode && end <= offset + length) {
-        endNode = textNode;
-        endOffset = end - offset;
-        break;
-      }
-      offset += length;
-    }
-    if (!startNode || !endNode) return null;
-    const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.setEnd(endNode, endOffset);
-    const rect = range.getClientRects()[0];
-    if (!rect) return null;
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }, text);
-  if (!point) throw new Error(`Could not locate ${text} in the terminal rows`);
-  await page.mouse.move(point.x, point.y);
-  await expect(page.locator(".xterm-cursor-pointer")).toBeVisible();
-  await page.mouse.click(point.x, point.y);
+type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
+
+async function clickExpectedTerminalLink(
+  page: Page,
+  row: Locator,
+  field: LinkCaptureField,
+  isExpected: (value: string | string[] | undefined) => boolean,
+) {
+  const screenBounds = await page.locator(".xterm-screen").boundingBox();
+  if (!screenBounds) throw new Error("The terminal screen has no browser bounds");
+  const rowIndex = await row.evaluate((element) => Array.prototype.indexOf.call(element.parentElement?.children ?? [], element) as number);
+  const cellWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
+  const lineHeight = await page.locator(".xterm").evaluate((element) => Number.parseFloat(getComputedStyle(element).lineHeight));
+  if (rowIndex < 0 || !Number.isFinite(cellWidth) || !Number.isFinite(lineHeight)) throw new Error("The terminal grid dimensions are unavailable");
+  const step = Math.max(cellWidth / 2, 1);
+  const y = screenBounds.y + (rowIndex + 0.5) * lineHeight;
+  const pointerCursor = page.locator(".xterm-cursor-pointer");
+
+  for (let x = screenBounds.x + step / 2; x < screenBounds.x + screenBounds.width; x += step) {
+    await page.mouse.move(x, y);
+    if (await pointerCursor.count() === 0) continue;
+    await page.mouse.click(x, y);
+    const opened = await page.evaluate((key) => {
+      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
+      return testWindow[key];
+    }, field);
+    if (isExpected(opened)) return;
+    await page.evaluate((key) => {
+      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
+      testWindow[key] = undefined;
+    }, field);
+  }
+  throw new Error(`No link in the terminal row matched ${field}`);
 }
 
 test("shortcut strip and command palette expose primary navigation", async ({ page }) => {
@@ -279,7 +269,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
       return null;
     }) as typeof window.open;
   });
-  await clickTerminalText(page, page.locator(".xterm-rows"), "lemma.txt");
+  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 
   await page.keyboard.type("eza -la /projects");
@@ -294,7 +284,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
   await page.evaluate(() => {
     (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
   });
-  await clickTerminalText(page, page.locator(".xterm-rows"), "lemma.txt");
+  await clickExpectedTerminalLink(page, aRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 });
 
@@ -313,7 +303,7 @@ test("same-origin relative terminal links open safely", async ({ page }) => {
       return null;
     }) as typeof window.open;
   });
-  await clickTerminalText(page, page.locator(".xterm-rows"), "cv.txt");
+  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "/cv/en");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
 });
 
@@ -334,7 +324,7 @@ for (const lang of ["en", "ru"]) {
           return null;
         }) as typeof window.open;
       });
-      await clickTerminalText(page, page.locator(".xterm-rows"), "cv.txt");
+      await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === `/cv/${lang}` && value[1] === "_blank" && value[2] === "noopener,noreferrer");
       await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual([`/cv/${lang}`, "_blank", "noopener,noreferrer"]);
     });
   }
@@ -354,7 +344,7 @@ for (const lang of ["en", "ru"]) {
         return null;
       }) as typeof window.open;
     });
-    await clickTerminalText(page, page.locator(".xterm-rows"), filename);
+    await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === "mailto:ooodnakov@yandex.ru" && value[1] === "_blank" && value[2] === "noopener,noreferrer");
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
