@@ -40,6 +40,8 @@ async function clickTerminalText(page: Page, rows: Locator, text: string) {
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }, text);
   if (!point) throw new Error(`Could not locate ${text} in the terminal rows`);
+  await page.mouse.move(point.x, point.y);
+  await expect(page.locator(".xterm-cursor-pointer")).toBeVisible();
   await page.mouse.click(point.x, point.y);
 }
 
@@ -97,7 +99,7 @@ test("palette remains open and reports busy while an accepted command is pending
   await page.getByRole("button", { name: /open command palette/i }).click();
   await page.getByRole("dialog", { name: /command palette/i }).getByRole("button", { name: /run tour in terminal/i }).click();
   await expect(palette).toBeVisible();
-  await expect(page.getByText("Terminal is busy. Please wait.")).toBeVisible();
+  await expect(page.getByText("Terminal is busy. Please wait.", { exact: true })).toBeVisible();
 
   await page.evaluate(() => (window as Window & { __resolveClipboardWrite?: () => void }).__resolveClipboardWrite?.());
   await expect(page.locator(".xterm-screen")).toContainText("Copied contact to clipboard");
