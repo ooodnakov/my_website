@@ -99,6 +99,14 @@ jobs:
         if: ${{ matrix.name == 'main-browser' }}
         run: ./tools/browser-os/build.sh
 
+      - name: Install browser OS smoke dependencies
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir tools/browser-os install --frozen-lockfile
+
+      - name: Boot generated browser OS guest
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir tools/browser-os smoke -- --node
+
       - name: Build production application
         if: ${{ matrix.name == 'main-browser' }}
         run: pnpm --dir apps/main build

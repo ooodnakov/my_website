@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { runGuestSmoke } from "./smoke-core.mjs";
+import { pipeTrackedResponse } from "./smoke-http.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const defaultAssets = path.resolve(here, "../../apps/main/client/public/browser-os/alpine-3.24.2-v86-0.5.469");
@@ -104,13 +105,14 @@ async function runBrowser() {
       }
       if (url.pathname === "/__test/smoke-core.mjs") {
         const stats = await fs.stat(corePath);
-        requests.push({ path: url.pathname, bytes: stats.size });
+        const trackedRequest = { path: url.pathname, bytes: 0 };
+        requests.push(trackedRequest);
         response.writeHead(200, {
           "content-type": "text/javascript; charset=utf-8",
           "content-length": stats.size,
           "cache-control": "no-store",
         });
-        createReadStream(corePath).pipe(response);
+        pipeTrackedResponse(createReadStream(corePath), response, trackedRequest);
         return;
       }
       if (url.pathname === "/favicon.ico") {
@@ -141,13 +143,14 @@ async function runBrowser() {
         response.writeHead(304, cacheHeaders).end();
         return;
       }
-      requests.push({ path: `/${relative}`, bytes: stats.size, status: 200 });
+      const trackedRequest = { path: `/${relative}`, bytes: 0, status: 200 };
+      requests.push(trackedRequest);
       response.writeHead(200, {
         ...cacheHeaders,
         "content-type": mimeType(filename),
         "content-length": stats.size,
       });
-      createReadStream(filename).pipe(response);
+      pipeTrackedResponse(createReadStream(filename), response, trackedRequest);
     } catch {
       failures.push(request.url ?? "unknown request");
       response.writeHead(404).end("not found");
