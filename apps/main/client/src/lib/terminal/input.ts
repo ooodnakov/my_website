@@ -7,21 +7,39 @@ export function bindTerminalInput(
 ): { dispose(): void } | null {
   if (input.owner === "legacy-shell-key-events") return null;
   let disposed = false;
+  let dataListener: { dispose(): void } | null = null;
+  let binaryListener: { dispose(): void } | null = null;
 
   const encoder = new TextEncoder();
-  const dataListener = terminal.onData((text) => input.sendBytes(encoder.encode(text)));
-  const binaryListener = terminal.onBinary((binary) => {
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index) & 0xff;
-    input.sendBytes(bytes);
-  });
+  try {
+    dataListener = terminal.onData((text) => {
+      if (!disposed) input.sendBytes(encoder.encode(text));
+    });
+    binaryListener = terminal.onBinary((binary) => {
+      if (disposed) return;
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index) & 0xff;
+      input.sendBytes(bytes);
+    });
+  } catch (error) {
+    disposed = true;
+    try {
+      dataListener?.dispose();
+    } catch {
+      // Preserve the listener-attachment error as the setup failure.
+    }
+    throw error;
+  }
 
   return {
     dispose() {
       if (disposed) return;
       disposed = true;
-      dataListener.dispose();
-      binaryListener.dispose();
+      try {
+        dataListener?.dispose();
+      } finally {
+        binaryListener?.dispose();
+      }
     },
   };
 }

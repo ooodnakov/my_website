@@ -418,13 +418,17 @@ else Reflect.deleteProperty(globalThis, "navigator");
 
 const textListeners = new Set<(text: string) => void>();
 const binaryListeners = new Set<(binary: string) => void>();
+const retainedTextListeners: Array<(text: string) => void> = [];
+const retainedBinaryListeners: Array<(binary: string) => void> = [];
 let inputListenerDisposals = 0;
 const streamingTerminal = {
   onData: (listener: (text: string) => void) => {
+    retainedTextListeners.push(listener);
     textListeners.add(listener);
     return { dispose: () => { textListeners.delete(listener); inputListenerDisposals += 1; } };
   },
   onBinary: (listener: (binary: string) => void) => {
+    retainedBinaryListeners.push(listener);
     binaryListeners.add(listener);
     return { dispose: () => { binaryListeners.delete(listener); inputListenerDisposals += 1; } };
   },
@@ -444,8 +448,28 @@ textListeners.forEach((listener) => listener("я"));
 binaryListeners.forEach((listener) => listener("\x03\xff"));
 assert.deepEqual(Array.from(sentInput[0]), Array.from(new TextEncoder().encode("я")));
 assert.deepEqual(Array.from(sentInput[1]), [3, 255]);
+const sentBeforeDispose = sentInput.length;
+const retainedTextListener = retainedTextListeners[0];
+const retainedBinaryListener = retainedBinaryListeners[0];
 inputBinding.dispose();
 inputBinding.dispose();
 assert.equal(textListeners.size + binaryListeners.size, 0);
 assert.equal(inputListenerDisposals, 2);
+retainedTextListener("late text");
+retainedBinaryListener("late binary");
+assert.equal(sentInput.length, sentBeforeDispose);
+
+let partialTextListener: ((text: string) => void) | undefined;
+let partialDataDisposals = 0;
+const attachmentFailure = new Error("injected binary listener attachment failure");
+assert.throws(() => bindTerminalInput({
+  onData: (listener: (text: string) => void) => {
+    partialTextListener = listener;
+    return { dispose: () => { partialDataDisposals += 1; } };
+  },
+  onBinary: () => { throw attachmentFailure; },
+} as never, streamingInput), (error: unknown) => error === attachmentFailure);
+assert.equal(partialDataDisposals, 1);
+partialTextListener?.("late after failed setup");
+assert.equal(sentInput.length, sentBeforeDispose);
 console.log("terminal tests passed");
