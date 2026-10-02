@@ -4,6 +4,8 @@ import json
 import pathlib
 import sys
 
+from source_provenance import APORTS_BRANCH, APORTS_COMMITS, APORTS_RECIPE_OVERRIDES, APORTS_REPOSITORY, enrich_packages
+
 
 def sha256(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
@@ -28,18 +30,18 @@ def read_apk_database(path: pathlib.Path) -> list[dict[str, str]]:
                 "license": fields.get("L", "unspecified"),
                 "origin": fields.get("o", fields["P"]),
                 "apkPackageChecksum": fields.get("C", "unavailable"),
-                "sourceUrl": fields.get("U", "unavailable"),
+                "upstreamHomepage": fields.get("U", "unavailable"),
             })
     return sorted(packages, key=lambda package: package["name"])
 
 
 def main() -> None:
-    if len(sys.argv) != 8:
-        raise SystemExit("usage: manifest.py OUTPUT ROOTFS V86_COMMIT V86_VERSION ALPINE_SHA256 SOURCE_DATE_EPOCH SEABIOS_COMMIT")
+    if len(sys.argv) != 9:
+        raise SystemExit("usage: manifest.py OUTPUT ROOTFS V86_COMMIT V86_VERSION ALPINE_SHA256 SOURCE_DATE_EPOCH SEABIOS_COMMIT APORTS_SOURCE")
 
     output = pathlib.Path(sys.argv[1]).resolve()
     rootfs = pathlib.Path(sys.argv[2]).resolve()
-    v86_commit, v86_version, alpine_sha256, source_date_epoch, seabios_commit = sys.argv[3:]
+    v86_commit, v86_version, alpine_sha256, source_date_epoch, seabios_commit, aports_source = sys.argv[3:]
     required = [
         "alpine/vmlinuz",
         "alpine/initramfs",
@@ -64,15 +66,27 @@ def main() -> None:
         for path in (output / "alpine/9p/blob").iterdir()
         if path.is_file()
     )
-    packages = read_apk_database(rootfs / "lib/apk/db/installed")
+    packages = enrich_packages(read_apk_database(rootfs / "lib/apk/db/installed"), pathlib.Path(aports_source))
     kernel_release = (rootfs / "usr/share/kernel/virt/kernel.release").read_text().strip()
     runtime_paths = required + blobs
     transfer_bytes = sum(assets[path]["bytes"] for path in runtime_paths)
     blob_bytes = sum(assets[path]["bytes"] for path in blobs)
     package_inventory = {
-        "format": "apk-installed-package-inventory/v1",
+        "format": "apk-installed-package-inventory/v2",
         "repository": "https://dl-cdn.alpinelinux.org/alpine/v3.24/{main,community}",
         "release": "3.24.2",
+        "alpineAports": {
+            "repository": APORTS_REPOSITORY,
+            "branch": APORTS_BRANCH,
+            "repositorySnapshots": {
+                area: commit for area, commit in APORTS_COMMITS.items() if area != "testing"
+            },
+            "recipeOverrides": {
+                origin: {"repositoryArea": area, "commit": commit}
+                for origin, (area, commit) in APORTS_RECIPE_OVERRIDES.items()
+            },
+        },
+        "licenseNotice": "APK license expressions are declarations, not proof that all notices or corresponding source are bundled. Review each package's licenseObligations before redistribution.",
         "packages": packages,
     }
     (output / "licenses/packages.json").write_text(
@@ -147,6 +161,20 @@ def main() -> None:
             "packageLock": "alpine/packages.lock",
             "packageInventory": "licenses/packages.json",
             "sourceMaterials": {
+                "alpinePackages": {
+                    "repository": APORTS_REPOSITORY,
+                    "branch": APORTS_BRANCH,
+                    "repositorySnapshots": {
+                        area: commit for area, commit in APORTS_COMMITS.items() if area != "testing"
+                    },
+                    "recipeOverrides": {
+                        origin: {"repositoryArea": area, "commit": commit}
+                        for origin, (area, commit) in APORTS_RECIPE_OVERRIDES.items()
+                    },
+                    "packageInventory": "licenses/packages.json",
+                    "sourceAvailability": "Per-package APKBUILD sourceMaterials includes declared archive hashes and immutable references to Alpine patch and packaging files.",
+                    "notices": "Package notice texts are not asserted complete by this manifest; distributors must satisfy each licenseObligations record.",
+                },
                 "v86": {
                     "repository": "https://github.com/copy/v86.git",
                     "commit": v86_commit,

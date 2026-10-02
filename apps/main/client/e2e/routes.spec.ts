@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 for (const route of ["/", "/en", "/ru", "/cv/", "/cv/en", "/cv/ru", "/legacy/"]) {
   test(`production route renders its app: ${route}`, async ({ page }) => {
@@ -42,4 +43,30 @@ test("production legacy files and archive redirect are served", async ({ request
   const archivePage = await request.get(archive.headers().location);
   expect(archivePage.status()).toBe(200);
   expect(archivePage.headers()["content-type"]).toContain("text/html");
+});
+
+test("production browser OS release assets are all served with manifest hashes", async ({ request }) => {
+  const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
+  const manifestResponse = await request.get(`${release}/manifest.json`);
+  expect(manifestResponse.status()).toBe(200);
+  const manifest = await manifestResponse.json();
+
+  const requiredAssets = [
+    "alpine/vmlinuz",
+    "alpine/initramfs",
+    "alpine/9p/fs.json",
+    "v86/libv86.mjs",
+    "v86/v86.wasm",
+  ];
+  for (const assetPath of requiredAssets) {
+    expect(manifest.assets[assetPath], assetPath).toBeDefined();
+  }
+
+  for (const [assetPath, expected] of Object.entries(manifest.assets)) {
+    const assetResponse = await request.get(`${release}/${assetPath}`);
+    expect(assetResponse.status(), assetPath).toBe(200);
+    const body = await assetResponse.body();
+    expect(body.length, assetPath).toBe(expected.bytes);
+    expect(createHash("sha256").update(body).digest("hex"), assetPath).toBe(expected.sha256);
+  }
 });

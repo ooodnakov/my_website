@@ -11,15 +11,18 @@ ALPINE_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minir
 ALPINE_SHA256=757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
+APORTS_MAIN_COMMIT=d5a34efc88bbe8d18737fda28125071c4aef8517
+APORTS_COMMUNITY_COMMIT=7805e4fb29efc937492a3173e55dc72ecd9fcdaf
+APORTS_OPENSSL_COMMIT=013edf8b29199933e8ea34dde460b5584b979042
 SOURCE_DATE_EPOCH=1767225600
 export SOURCE_DATE_EPOCH
 
 fail() { printf '%s\n' "browser-os build: $*" >&2; exit 1; }
-
 mkdir -p "$OUT"
 [ -d "$OUT" ] || fail 'output directory not available'
 rm -rf "$WORK"
-mkdir -p "$ROOTFS" "$OUT/alpine/9p/blob" "$OUT/alpine" "$OUT/v86" "$OUT/licenses"
+mkdir -p "$ROOTFS" "$ROOTFS/tmp/mkinitfs-stage" "$OUT/alpine/9p/blob" "$OUT/alpine" "$OUT/v86" "$OUT/licenses"
+printf '%s\n' "__BROWSER_OS_TMPFS_FSID__=$(stat -f -c %i /tmp/browser-os-initramfs)"
 
 wget -q "$ALPINE_URL" -O "$WORK/alpine-minirootfs.tar.gz"
 actual_alpine_sha=$(sha256sum "$WORK/alpine-minirootfs.tar.gz" | cut -d ' ' -f 1)
@@ -34,7 +37,7 @@ printf '%s\n' \
 # elevated container capabilities, or host configuration changes.
 cd /
 PROOT_NET='proot -0 -q qemu-i386 -b /etc/resolv.conf:/etc/resolv.conf -r /tmp/browser-os-build/rootfs'
-PROOT='proot -0 -q qemu-i386 -r /tmp/browser-os-build/rootfs'
+PROOT='proot -0 -q qemu-i386 -b /tmp/browser-os-initramfs:/tmp/mkinitfs-stage -r /tmp/browser-os-build/rootfs'
 $PROOT_NET /sbin/apk update
 set --
 while IFS= read -r package; do
@@ -42,6 +45,12 @@ while IFS= read -r package; do
   set -- "$@" "$package"
 done < /usr/local/share/browser-os/packages.lock
 $PROOT_NET /sbin/apk --no-scripts add "$@"
+APORTS_SOURCE="$WORK/aports"
+git clone --filter=blob:none --no-checkout https://gitlab.alpinelinux.org/alpine/aports.git "$APORTS_SOURCE"
+git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
+git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
+git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
+git -C "$APORTS_SOURCE" checkout --detach "$APORTS_COMMUNITY_COMMIT"
 
 $PROOT /bin/sh -ec '
   adduser -D -u 1000 -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor
@@ -91,7 +100,8 @@ chown 1000:1000 "$ROOTFS/home/visitor/.zcompdump"
 chmod 0444 "$ROOTFS/home/visitor/.zcompdump"
 
 python3 -c 'import os,pathlib,sys; epoch=int(sys.argv[2]); [os.utime(path,(epoch,epoch),follow_symlinks=False) for path in [pathlib.Path(sys.argv[1]),*pathlib.Path(sys.argv[1]).rglob("*")]]' "$ROOTFS" "$SOURCE_DATE_EPOCH"
-$PROOT /sbin/mkinitfs -F "base virtio 9p" "$($PROOT /bin/cat /usr/share/kernel/virt/kernel.release)"
+$PROOT /sbin/mkinitfs -F "base virtio 9p" -t /tmp/mkinitfs-stage "$($PROOT /bin/cat /usr/share/kernel/virt/kernel.release)"
+/usr/local/bin/normalize-initramfs.py "$ROOTFS/boot/initramfs-virt"
 # 9p rootfiles never load modules after the initramfs has mounted the guest.
 rm -rf "$ROOTFS/lib/modules"
 
@@ -137,5 +147,5 @@ python3 "$V86_SOURCE/tools/copy-to-sha256.py" --zstd "$ROOTFS" "$OUT/alpine/9p/b
 # Source-date normalization makes locally generated files deterministic. Keep
 # the original upstream package/kernel mtimes represented in package contents.
 find "$OUT" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT"
+python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT" "$APORTS_SOURCE"
 printf '%s\n' "Guest assets generated at $OUT"

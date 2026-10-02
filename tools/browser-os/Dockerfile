@@ -13,7 +13,7 @@ RUN apk add --no-cache \
 
 COPY packages.lock /usr/local/share/browser-os/packages.lock
 COPY python-zstd-fallback.patch /usr/local/share/browser-os/
-COPY guest-build.sh manifest.py /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/guest-build.sh
+COPY guest-build.sh manifest.py source_provenance.py normalize-initramfs.py /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/guest-build.sh /usr/local/bin/normalize-initramfs.py
 
 ENTRYPOINT ["/usr/local/bin/guest-build.sh"]

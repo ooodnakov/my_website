@@ -17,7 +17,7 @@ docker build --platform linux/arm64 \
   --file "$ROOT/tools/browser-os/Dockerfile" \
   --tag "$IMAGE" \
   "$ROOT/tools/browser-os"
-docker create --platform linux/arm64 --name "$CONTAINER" "$IMAGE" >/dev/null
+docker create --platform linux/arm64 --tmpfs /tmp/browser-os-initramfs:rw,exec,nosuid,size=256m --name "$CONTAINER" "$IMAGE" >/dev/null
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT HUP INT TERM
 docker start --attach "$CONTAINER"

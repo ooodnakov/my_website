@@ -91,6 +91,20 @@ jobs:
           pnpm --dir apps/cv-site install --frozen-lockfile
           pnpm --dir apps/legacy_rewored install --frozen-lockfile
 
+      - name: Set up QEMU for the ARM64 guest builder
+        if: ${{ matrix.name == 'main-browser' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Generate pinned browser OS production assets
+        if: ${{ matrix.name == 'main-browser' }}
+        run: ./tools/browser-os/build.sh
+
+      - name: Build production application
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir apps/main build
+
       - name: Install Chromium and Linux browser dependencies
         if: ${{ matrix.name == 'main-browser' }}
         working-directory: apps/main
