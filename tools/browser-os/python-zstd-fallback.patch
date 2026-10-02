@@ -1,0 +1,16 @@
+diff --git a/tools/copy-to-sha256.py b/tools/copy-to-sha256.py
+--- a/tools/copy-to-sha256.py
++++ b/tools/copy-to-sha256.py
+@@ -30,6 +30,10 @@ class ZstdCompress()
+         if sys.version_info >= (3, 14):
+-            self.zstd_lib = importlib.import_module("compression").zstd
+-            self.zstd_builtin = True
++            try:
++                self.zstd_lib = importlib.import_module("compression").zstd
++                self.zstd_builtin = True
++            except AttributeError:
++                self.zstd_lib = importlib.import_module("zstandard")
++                self.zstd_builtin = False
+         else:
+             try:
+                 self.zstd_lib = importlib.import_module("zstandard")

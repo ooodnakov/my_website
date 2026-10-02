@@ -1,0 +1,16 @@
+{
+  "name": "browser-os-guest-tools",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "smoke": "node smoke.mjs",
+    "test": "node --test smoke-core.test.mjs"
+  },
+  "dependencies": {
+    "v86": "0.5.469"
+  },
+  "devDependencies": {
+    "playwright-core": "1.61.0"
+  }
+}
