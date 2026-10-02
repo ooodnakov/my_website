@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-async function clickTerminalText(page: Page, row: Locator, text: string) {
-  const point = await row.evaluate((element, target) => {
+async function clickTerminalText(page: Page, rows: Locator, text: string) {
+  const point = await rows.evaluate((element, target) => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     const textNodes: Node[] = [];
     let node = walker.nextNode();
@@ -10,7 +10,7 @@ async function clickTerminalText(page: Page, row: Locator, text: string) {
       node = walker.nextNode();
     }
     const content = textNodes.map((textNode) => textNode.textContent ?? "").join("");
-    const start = content.indexOf(target);
+    const start = content.lastIndexOf(target);
     if (start < 0) return null;
     const end = start + target.length;
     let offset = 0;
@@ -35,10 +35,11 @@ async function clickTerminalText(page: Page, row: Locator, text: string) {
     const range = document.createRange();
     range.setStart(startNode, startOffset);
     range.setEnd(endNode, endOffset);
-    const rect = range.getBoundingClientRect();
+    const rect = range.getClientRects()[0];
+    if (!rect) return null;
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }, text);
-  if (!point) throw new Error(`Could not locate ${text} in the terminal row`);
+  if (!point) throw new Error(`Could not locate ${text} in the terminal rows`);
   await page.mouse.click(point.x, point.y);
 }
 
@@ -276,7 +277,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
       return null;
     }) as typeof window.open;
   });
-  await clickTerminalText(page, linkedRow, "lemma.txt");
+  await clickTerminalText(page, page.locator(".xterm-rows"), "lemma.txt");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 
   await page.keyboard.type("eza -la /projects");
@@ -291,7 +292,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
   await page.evaluate(() => {
     (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
   });
-  await clickTerminalText(page, aRow, "lemma.txt");
+  await clickTerminalText(page, page.locator(".xterm-rows"), "lemma.txt");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 });
 
@@ -310,7 +311,7 @@ test("same-origin relative terminal links open safely", async ({ page }) => {
       return null;
     }) as typeof window.open;
   });
-  await clickTerminalText(page, linkedRow, "cv.txt");
+  await clickTerminalText(page, page.locator(".xterm-rows"), "cv.txt");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
 });
 
@@ -331,7 +332,7 @@ for (const lang of ["en", "ru"]) {
           return null;
         }) as typeof window.open;
       });
-      await clickTerminalText(page, linkedRow, "cv.txt");
+      await clickTerminalText(page, page.locator(".xterm-rows"), "cv.txt");
       await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual([`/cv/${lang}`, "_blank", "noopener,noreferrer"]);
     });
   }
@@ -351,7 +352,7 @@ for (const lang of ["en", "ru"]) {
         return null;
       }) as typeof window.open;
     });
-    await clickTerminalText(page, linkedRow, filename);
+    await clickTerminalText(page, page.locator(".xterm-rows"), filename);
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
