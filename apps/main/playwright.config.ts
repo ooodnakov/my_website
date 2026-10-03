@@ -4,7 +4,7 @@ const production = process.env.PLAYWRIGHT_TEST_PRODUCTION === "1";
 
 export default defineConfig({
   testDir: "./client/e2e",
-  testMatch: production ? ["**/terminal.spec.ts", "**/routes.spec.ts"] : "**/terminal.spec.ts",
+  testMatch: ["**/terminal.spec.ts", "**/routes.spec.ts"],
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,
@@ -16,7 +16,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: production ? "pnpm start" : "pnpm dev:client --host 127.0.0.1",
+    command: production ? "pnpm start" : "pnpm dev",
     url: "http://127.0.0.1:5000",
     reuseExistingServer: false,
     env: { PORT: "5000" },
