@@ -57,6 +57,23 @@ export function registerLegacyFileRoutes(app: Express) {
   });
 }
 
+export function registerBrowserOsAssetRoutes(app: Express, assetRoot: string) {
+  app.use("/browser-os", express.static(assetRoot, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(".wasm")) res.type("application/wasm");
+      else if (filePath.endsWith(".mjs")) res.type("text/javascript");
+      else if (filePath.endsWith(".zst")) res.type("application/zstd");
+      res.setHeader(
+        "Cache-Control",
+        path.basename(filePath) === "manifest.json" ? "no-cache" : "public, max-age=0, must-revalidate",
+      );
+    },
+  }));
+  app.use("/browser-os", (_req, res) => {
+    res.status(404).json({ message: "Browser OS asset not found" });
+  });
+}
+
 export function serveStatic(app: Express) {
   const distPath = path.resolve(serverDir, "public");
   const cvDistPath = path.resolve(distPath, "cv");
@@ -104,6 +121,8 @@ export function serveStatic(app: Express) {
     return res.redirect(302, target);
   });
   app.use("/legacy", express.static(legacyDistPath));
+
+  registerBrowserOsAssetRoutes(app, path.resolve(distPath, "browser-os"));
 
   app.use(express.static(distPath));
 

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
 
@@ -350,3 +351,177 @@ for (const lang of ["en", "ru"]) {
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
+
+test("the lightweight terminal does not fetch VM assets before opt-in", async ({ page }) => {
+  const assetRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/browser-os/")) assetRequests.push(request.url());
+  });
+  await page.goto("/en");
+  await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
+  expect(assetRequests).toEqual([]);
+});
+
+test("development missing browser OS assets return a real 404", async ({ request }) => {
+  const response = await request.get("/browser-os/missing-release/manifest.json");
+  expect(response.status()).toBe(404);
+  expect(response.headers()["content-type"]).toContain("application/json");
+  expect(await response.text()).not.toContain("<!doctype html>");
+});
+
+test("the opt-in worker surfaces a missing manifest and returns to lightweight mode", async ({ page }) => {
+  await page.route("**/browser-os/**", (route) => route.abort());
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
+  await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
+});
+
+test("the opt-in worker rejects an unpinned guest manifest before requesting assets", async ({ page }) => {
+  const releaseRequests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/browser-os/")) releaseRequests.push(pathname);
+  });
+  await page.route("**/browser-os/**/manifest.json", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ schemaVersion: 1, release: "untrusted-release" }),
+  }));
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
+  expect(releaseRequests).toEqual(["/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json"]);
+});
+
+test("the opt-in worker rejects a manifest without its content-derived guest identity", async ({ page }) => {
+  const releaseRequests: string[] = [];
+  await page.route("**/browser-os/**/manifest.json", async (route) => {
+    const response = await route.fetch();
+    const manifest = await response.json();
+    delete manifest.assets[manifest.guest.assetPaths.filesystemJson].sha256;
+    await route.fulfill({ response, json: manifest });
+  });
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/browser-os/") && !pathname.endsWith("/manifest.json")) releaseRequests.push(pathname);
+  });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
+  expect(releaseRequests).toEqual([]);
+});
+
+
+test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
+  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
+  test.setTimeout(240_000);
+  const workerUrls: string[] = [];
+  const wasmUrls: string[] = [];
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/browser-os/") && url.pathname.endsWith(".wasm")) wasmUrls.push(url.href);
+  });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/en");
+  const screen = page.locator(".xterm-screen");
+  const mobileClear = page.locator(".terminal-mobile-bar").getByRole("button", { name: "clear", exact: true });
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClear).toBeDisabled();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(mobileClear).toBeDisabled();
+  const origin = new URL(page.url()).origin;
+  expect(workerUrls.length).toBeGreaterThan(0);
+  expect(workerUrls.every((url) => new URL(url).origin === origin)).toBe(true);
+  expect(wasmUrls.some((url) => new URL(url).pathname.endsWith("/v86.wasm"))).toBe(true);
+  expect(wasmUrls.every((url) => new URL(url).origin === origin)).toBe(true);
+
+  const input = page.locator(".xterm-helper-textarea");
+  await input.click();
+  await page.keyboard.type("printf 'Привет Linux\\n' | tee /tmp/os-preview.txt | tr '[:lower:]' '[:upper:]' > /tmp/os-preview.upper; pipeStatus=$?; cat /tmp/os-preview.txt /tmp/os-preview.upper; printf 'PIPE_EXIT=%d\\n' \"$pipeStatus\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Привет Linux", { timeout: 30_000 });
+  await expect(screen).toContainText("ПРИВЕТ LINUX", { timeout: 30_000 });
+  await expect(screen).toContainText("PIPE_EXIT=0", { timeout: 30_000 });
+  await input.click();
+  await page.keyboard.type("printf 'A\\rB\\nC\\r\\nD\\n'");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("D", { timeout: 30_000 });
+  const rows = await screen.locator(".xterm-rows > div").evaluateAll((elements) => elements.map((element) => element.textContent ?? ""));
+  expect(rows.some((line) => line.trim() === "B")).toBe(true);
+  expect(rows.some((line) => line.startsWith(" ") && line.trim() === "C")).toBe(true);
+
+
+  await page.keyboard.type("sleep 30 & sleep_pid=$!; printf 'INTERRUPT_READY\\n'; wait \"$sleep_pid\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("INTERRUPT_READY", { timeout: 30_000 });
+  await page.keyboard.press("Control+C");
+  await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
+});
+
+test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
+  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
+  test.setTimeout(240_000);
+  const workerUrls: string[] = [];
+  let fallbackRequested = false;
+  const malformedPrimary = Buffer.from([0xff, 0x00, 0x01]);
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/v86/v86-fallback.wasm")) fallbackRequested = true;
+  });
+  await page.route("**/browser-os/**/manifest.json", async (route) => {
+    const response = await route.fetch();
+    const manifest = await response.json();
+    manifest.assets["v86/v86.wasm"] = {
+      bytes: malformedPrimary.byteLength,
+      sha256: createHash("sha256").update(malformedPrimary).digest("hex"),
+    };
+    await route.fulfill({ response, json: manifest });
+  });
+  await page.route("**/browser-os/**/v86/v86.wasm", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/wasm",
+    body: malformedPrimary,
+  }));
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText("Verified fallback WASM selected after primary initialization failed.", { exact: true })).toBeVisible();
+  expect(fallbackRequested).toBe(true);
+  expect(workerUrls.length).toBeGreaterThan(0);
+  const screen = page.locator(".xterm-screen");
+  await page.locator(".xterm-helper-textarea").click();
+  await page.keyboard.type("printf 'fallback-pid=%s\\n' \"$$\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText(/fallback-pid=\\d+/, { timeout: 30_000 });
+});
+
+test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
+  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
+  test.setTimeout(240_000);
+  let workerCreations = 0;
+  page.on("worker", () => { workerCreations += 1; });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  expect(page.workers()).toHaveLength(1);
+  const workerCountBeforeReset = workerCreations;
+  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  expect(page.workers()).toHaveLength(1);
+
+  await page.evaluate(() => {
+    history.pushState({}, "", "/__terminal-away");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(() => page.workers().length).toBe(0);
+});
