@@ -3,8 +3,13 @@ import type { V86Options } from "v86";
 import { Com2Decoder, MAX_CONTROL_SEQUENCE, encodeHostControlFrame, type GuestControlFrame, type HostControlFrame } from "./com2Protocol";
 import type { V86WorkerRequest as WorkerRequest, V86WorkerResponse as WorkerResponse } from "./v86Session";
 
+interface ManifestAsset {
+  bytes: number;
+  sha256: string;
+}
+
 interface GuestManifest {
-  assets: Record<string, { bytes: number; sha256: string }>;
+  assets: Record<string, ManifestAsset>;
   schemaVersion: number;
   release: string;
   guest: {
@@ -26,6 +31,20 @@ const scope = globalThis as typeof globalThis & {
 const MAX_SERIAL_BATCH = 64 * 1024;
 const EXPECTED_RELEASE = "alpine-3.24.2-v86-0.5.469";
 const EXPECTED_KERNEL_COMMAND_LINE = "console=ttyS0,115200n8 root=host9p rootfstype=9p rootflags=trans=virtio,version=9p2000.L rw modules=virtio_pci";
+interface TerminalDimensions {
+  cols: number;
+  rows: number;
+}
+
+const MAX_MANIFEST_BYTES = 2_000_000;
+const MAX_MANIFEST_ASSETS = 4096;
+const MAX_INVENTORY_BYTES = 128 * 1024 * 1024;
+let manifestAssets = new Map<string, ManifestAsset>();
+let helloDimensions: TerminalDimensions | null = null;
+let appliedDimensions: TerminalDimensions | null = null;
+let resizeInFlight: TerminalDimensions | null = null;
+let controlReadySent = false;
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 let emulator: V86 | null = null;
 let outputBuffer = new Uint8Array(MAX_SERIAL_BATCH);
 let outputLength = 0;
@@ -56,12 +75,14 @@ function send(message: WorkerResponse, transfer?: Transferable[]) {
 function fail(message: string) {
   if (disposed || failed) return;
   failed = true;
+  if (resizeTimer !== null) clearTimeout(resizeTimer);
+  resizeTimer = null;
   send({ type: "error", message });
 }
 
 function failControl(message: string) {
   if (disposed || failed || controlFailed) return;
-  if (!guestReady) {
+  if (!controlReadySent) {
     fail(message);
     return;
   }
@@ -72,15 +93,16 @@ function failControl(message: string) {
   send({ type: "control-error", message });
 }
 
-function assetPath(base: URL, value: string): string {
-  if (!value || value.startsWith("/") || value.includes("?") || value.includes("#")) {
-    throw new Error("Guest manifest contains an unsafe asset path");
-  }
-  const parts = value.split("/");
-  if (parts[parts.length - 1] === "") parts.pop();
-  if (parts.length === 0 || parts.some((part) => !part || part === "." || part === "..")) {
-    throw new Error("Guest manifest contains an unsafe asset path");
-  }
+function isSafeAssetName(value: string, allowTrailingSlash = false): boolean {
+  if (!value || value.startsWith("/") || value.includes("\\") || value.includes("%")
+    || value.includes("?") || value.includes("#") || value.includes(":") || /[\u0000-\u0020\u007f]/.test(value)) return false;
+  const path = allowTrailingSlash && value.endsWith("/") ? value.slice(0, -1) : value;
+  const parts = path.split("/");
+  return parts.length > 0 && parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function assetPath(base: URL, value: string, allowTrailingSlash = false): string {
+  if (!isSafeAssetName(value, allowTrailingSlash)) throw new Error("Guest manifest contains an unsafe asset path");
   const resolved = new URL(value, base);
   if (resolved.origin !== base.origin || !resolved.pathname.startsWith(base.pathname)) {
     throw new Error("Guest manifest asset escaped its release directory");
@@ -93,7 +115,34 @@ function isGuestManifest(value: unknown): value is GuestManifest {
   const manifest = value as Partial<GuestManifest>;
   const guestPaths = manifest.guest?.assetPaths;
   const emulatorPaths = manifest.emulator?.assetPaths;
-  const filesystemJson = guestPaths && manifest.assets?.[guestPaths.filesystemJson];
+  const assets = manifest.assets as unknown;
+  if (assets === null || typeof assets !== "object" || Array.isArray(assets)) return false;
+  const entries = Object.entries(assets as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > MAX_MANIFEST_ASSETS) return false;
+  let inventoryBytes = 0;
+  let blobCount = 0;
+  for (const [name, value] of entries) {
+    if (!isSafeAssetName(name) || value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const asset = value as Record<string, unknown>;
+    if (Object.keys(asset).length !== 2 || !Object.hasOwn(asset, "bytes") || !Object.hasOwn(asset, "sha256")
+      || !Number.isSafeInteger(asset.bytes) || (asset.bytes as number) <= 0
+      || (asset.bytes as number) > MAX_INVENTORY_BYTES
+      || typeof asset.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(asset.sha256)) return false;
+    inventoryBytes += asset.bytes as number;
+    if (!Number.isSafeInteger(inventoryBytes) || inventoryBytes > MAX_INVENTORY_BYTES) return false;
+    if (guestPaths?.filesystemBlobs && name.startsWith(guestPaths.filesystemBlobs)) blobCount += 1;
+  }
+  if (blobCount === 0) return false;
+  const requiredPaths = [
+    guestPaths?.kernel,
+    guestPaths?.initrd,
+    guestPaths?.filesystemJson,
+    emulatorPaths?.bios,
+    emulatorPaths?.vgaBios,
+    emulatorPaths?.wasm,
+    emulatorPaths?.fallbackWasm,
+  ];
+  if (!requiredPaths.every((path) => typeof path === "string" && Object.hasOwn(assets as object, path))) return false;
   return manifest.schemaVersion === 1
     && manifest.release === EXPECTED_RELEASE
     && manifest.guest?.memoryBytes === 128 * 1024 * 1024
@@ -102,15 +151,140 @@ function isGuestManifest(value: unknown): value is GuestManifest {
     && guestPaths.initrd === "alpine/initramfs"
     && guestPaths.filesystemJson === "alpine/9p/fs.json"
     && guestPaths.filesystemBlobs === "alpine/9p/blob/"
-    && Number.isSafeInteger(filesystemJson?.bytes)
-    && (filesystemJson?.bytes ?? 0) > 0
-    && typeof filesystemJson?.sha256 === "string"
-    && /^[0-9a-f]{64}$/.test(filesystemJson.sha256)
     && manifest.emulator?.version === "0.5.469"
     && emulatorPaths?.bios === "v86/seabios.bin"
     && emulatorPaths.vgaBios === "v86/vgabios.bin"
     && emulatorPaths.wasm === "v86/v86.wasm"
     && emulatorPaths.fallbackWasm === "v86/v86-fallback.wasm";
+}
+
+async function verifyAssetBytes(name: string, bytes: ArrayBuffer, asset: ManifestAsset): Promise<void> {
+  if (bytes.byteLength !== asset.bytes) throw new Error(`Pinned guest asset size mismatch: ${name}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (actual !== asset.sha256) throw new Error(`Pinned guest asset digest mismatch: ${name}`);
+}
+
+async function fetchVerifiedAsset(base: URL, name: string, asset: ManifestAsset, requireWasmMime = false): Promise<ArrayBuffer> {
+  const url = new URL(assetPath(base, name));
+  const response = await fetch(url.href, { cache: "no-cache" });
+  if (!response.ok) throw new Error(`Pinned guest asset request failed (${response.status}): ${name}`);
+  const responseUrl = new URL(response.url);
+  if (responseUrl.origin !== url.origin || responseUrl.pathname !== url.pathname || responseUrl.search || responseUrl.hash) {
+    throw new Error(`Pinned guest asset redirected outside its path: ${name}`);
+  }
+  if (requireWasmMime && !response.headers.get("content-type")?.toLowerCase().includes("application/wasm")) {
+    throw new Error(`Pinned WASM asset has an invalid MIME type: ${name}`);
+  }
+  const bytes = await response.arrayBuffer();
+  await verifyAssetBytes(name, bytes, asset);
+  return bytes;
+}
+
+function installAssetIntegrityXHR(base: URL, assets: ReadonlyMap<string, ManifestAsset>): void {
+  const NativeXMLHttpRequest = globalThis.XMLHttpRequest;
+  const findDescriptor = (property: string): PropertyDescriptor | undefined => {
+    let prototype: object | null = NativeXMLHttpRequest.prototype;
+    while (prototype) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
+      if (descriptor) return descriptor;
+      prototype = Object.getPrototypeOf(prototype) as object | null;
+    }
+    return undefined;
+  };
+  const responseTypeDescriptor = findDescriptor("responseType");
+  const responseDescriptor = findDescriptor("response");
+  const onloadDescriptor = findDescriptor("onload");
+  if (!responseTypeDescriptor?.set || !responseDescriptor?.get || !onloadDescriptor?.set) {
+    throw new Error("Guest asset integrity checks require XHR response accessors");
+  }
+
+  class VerifiedAssetXMLHttpRequest extends NativeXMLHttpRequest {
+    private requestedAsset: string | null = null;
+    private requestedUrl: URL | null = null;
+    private requestedResponseType: XMLHttpRequestResponseType = "";
+    private responseOverride: unknown;
+    private loadHandler: XMLHttpRequest["onload"] = null;
+
+    override open(method: string, url: string | URL, async = true, username?: string | null, password?: string | null): void {
+      this.requestedAsset = "";
+      this.requestedUrl = null;
+      try {
+        const target = new URL(url.toString(), base);
+        if (target.origin === base.origin && target.pathname.startsWith(base.pathname) && !target.search && !target.hash) {
+          this.requestedUrl = target;
+          const encodedName = target.pathname.slice(base.pathname.length);
+          try {
+            this.requestedAsset = decodeURIComponent(encodedName);
+          } catch {
+            this.requestedAsset = "";
+          }
+        }
+      } catch {
+        this.requestedAsset = "";
+      }
+      super.open(method, url, async, username, password);
+    }
+
+    override get responseType(): XMLHttpRequestResponseType {
+      return this.requestedResponseType;
+    }
+
+    override set responseType(value: XMLHttpRequestResponseType) {
+      this.requestedResponseType = value;
+      responseTypeDescriptor!.set!.call(this, this.requestedAsset !== null && value === "json" ? "arraybuffer" : value);
+    }
+
+    override get response(): unknown {
+      return this.responseOverride === undefined ? responseDescriptor!.get!.call(this) as unknown : this.responseOverride;
+    }
+
+    override get onload(): XMLHttpRequest["onload"] {
+      return this.loadHandler;
+    }
+
+    override set onload(handler: XMLHttpRequest["onload"]) {
+      this.loadHandler = handler;
+    }
+
+    override send(body?: Document | XMLHttpRequestBodyInit | null): void {
+      if (this.requestedAsset === null || this.requestedAsset === "" || !assets.has(this.requestedAsset)) {
+        fail("Guest runtime requested an unpinned asset");
+        return;
+      }
+      onloadDescriptor!.set!.call(this, (event: ProgressEvent<EventTarget>) => {
+        void this.verifyAndDispatchLoad(event);
+      });
+      super.send(body);
+    }
+
+    private async verifyAndDispatchLoad(event: ProgressEvent<EventTarget>): Promise<void> {
+      const name = this.requestedAsset;
+      const url = this.requestedUrl;
+      const entry = name ? assets.get(name) : undefined;
+      if (!name || !url || !entry || url.search || url.hash || (this.responseURL && this.responseURL !== url.href)) {
+        fail("Guest runtime requested an unpinned or redirected asset");
+        return;
+      }
+      const bytes = responseDescriptor!.get!.call(this) as unknown;
+      if (!(bytes instanceof ArrayBuffer)) {
+        fail(`Guest asset did not return binary bytes: ${name}`);
+        return;
+      }
+      try {
+        await verifyAssetBytes(name, bytes, entry);
+        this.responseOverride = this.requestedResponseType === "json"
+          ? JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+          : bytes;
+      } catch (error) {
+        fail(error instanceof Error ? error.message : `Guest asset verification failed: ${name}`);
+        return;
+      }
+      this.loadHandler?.call(this, event);
+    }
+  }
+
+  globalThis.XMLHttpRequest = VerifiedAssetXMLHttpRequest;
 }
 
 function createSessionId(): string {
@@ -134,14 +308,53 @@ function sendControl(frame: HostControlFrame): boolean {
   }
 }
 
+function matchesDimensions(left: TerminalDimensions | null, right: TerminalDimensions): boolean {
+  return left !== null && left.cols === right.cols && left.rows === right.rows;
+}
+
+function signalControlReadyWhenSized(): void {
+  if (!guestReady || controlReadySent || resizeInFlight || !matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) return;
+  controlReadySent = true;
+  send({ type: "control-ready" });
+}
+
+function sendDesiredResize(): void {
+  if (!guestReady || controlFailed || resizeInFlight || matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) {
+    signalControlReadyWhenSized();
+    return;
+  }
+  const dimensions = { cols: currentColumns, rows: currentRows };
+  resizeInFlight = dimensions;
+  if (!sendControl({ op: "resize", ...dimensions })) {
+    resizeInFlight = null;
+    return;
+  }
+  if (resizeTimer !== null) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (resizeInFlight === dimensions) failControl("Guest resize acknowledgement timed out");
+  }, 10_000);
+}
+
 function handleControlFrame(frame: GuestControlFrame, sequence: number) {
   if (frame.op === "ready") {
-    if (guestReady || frame.guestBuildId !== guestBuildId || frame.cols !== currentColumns || frame.rows !== currentRows) {
-      failControl("Guest control daemon identity or initial dimensions do not match");
+    if (guestReady || !helloDimensions || frame.guestBuildId !== guestBuildId
+      || frame.cols !== helloDimensions.cols || frame.rows !== helloDimensions.rows) {
+      failControl("Guest control daemon identity or hello dimensions do not match");
       return;
     }
     guestReady = true;
-    send({ type: "control-ready" });
+    appliedDimensions = helloDimensions;
+    sendDesiredResize();
+  } else if (frame.op === "resizeAck") {
+    if (!resizeInFlight || frame.cols !== resizeInFlight.cols || frame.rows !== resizeInFlight.rows) {
+      failControl("Guest resize acknowledgement does not match the in-flight resize");
+      return;
+    }
+    if (resizeTimer !== null) clearTimeout(resizeTimer);
+    resizeTimer = null;
+    appliedDimensions = resizeInFlight;
+    resizeInFlight = null;
+    sendDesiredResize();
   } else if (frame.op === "shellReady") {
     if (!guestReady || shellReady || frame.guestBuildId !== guestBuildId) {
       failControl("Guest shell startup identity is invalid");
@@ -215,7 +428,13 @@ function createEmulator(options: V86Options): V86 {
     if (disposed || failed) return;
     sessionId = createSessionId();
     controlDecoder = new Com2Decoder(sessionId);
-    if (!sendControl({ op: "hello", cols: currentColumns, rows: currentRows })) return;
+    helloDimensions = { cols: currentColumns, rows: currentRows };
+    appliedDimensions = null;
+    resizeInFlight = null;
+    controlReadySent = false;
+    if (resizeTimer !== null) clearTimeout(resizeTimer);
+    resizeTimer = null;
+    if (!sendControl({ op: "hello", ...helloDimensions })) return;
     sendControl({ op: "setLocale", locale: currentLocale });
   });
   instance.add_listener("serial0-output-byte", queueOutput);
@@ -223,7 +442,7 @@ function createEmulator(options: V86Options): V86 {
   return instance;
 }
 
-async function start(manifestUrl: string, cols: number, rows: number, locale: "en" | "ru") {
+async function start(manifestUrl: string) {
   try {
     const response = await fetch(manifestUrl, { cache: "no-cache" });
     if (!response.ok) throw new Error(`Guest manifest request failed (${response.status})`);
@@ -235,28 +454,51 @@ async function start(manifestUrl: string, cols: number, rows: number, locale: "e
       throw new Error("Guest manifest response is not JSON");
     }
     const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > 2_000_000) throw new Error("Guest manifest exceeds the size limit");
+    if (Number.isFinite(contentLength) && contentLength > MAX_MANIFEST_BYTES) throw new Error("Guest manifest exceeds the size limit");
     const manifestText = await response.text();
-    if (manifestText.length > 2_000_000) throw new Error("Guest manifest exceeds the size limit");
+    if (manifestText.length > MAX_MANIFEST_BYTES) throw new Error("Guest manifest exceeds the size limit");
     const value: unknown = JSON.parse(manifestText);
     if (!isGuestManifest(value)) throw new Error("Guest manifest is invalid or not the pinned v86 release");
     if (disposed) return;
-    currentColumns = cols;
-    currentRows = rows;
-    currentLocale = locale;
-    guestBuildId = value.assets[value.guest.assetPaths.filesystemJson].sha256;
     const base = new URL("./", response.url);
     const paths = value.emulator.assetPaths;
     const guest = value.guest;
+    const [bios, vgaBios, kernel, initrd] = await Promise.all([
+      fetchVerifiedAsset(base, paths.bios, value.assets[paths.bios]),
+      fetchVerifiedAsset(base, paths.vgaBios, value.assets[paths.vgaBios]),
+      fetchVerifiedAsset(base, guest.assetPaths.kernel, value.assets[guest.assetPaths.kernel]),
+      fetchVerifiedAsset(base, guest.assetPaths.initrd, value.assets[guest.assetPaths.initrd]),
+    ]);
+    if (disposed) return;
+    guestBuildId = value.assets[guest.assetPaths.filesystemJson].sha256;
+    manifestAssets = new Map(Object.entries(value.assets));
+    installAssetIntegrityXHR(base, manifestAssets);
+    const wasmFn: NonNullable<V86Options["wasm_fn"]> = async (imports) => {
+      const primary = await fetchVerifiedAsset(base, paths.wasm, value.assets[paths.wasm], true);
+      try {
+        return (await WebAssembly.instantiate(primary, imports)).instance.exports;
+      } catch (primaryError) {
+        const fallback = await fetchVerifiedAsset(base, paths.fallbackWasm, value.assets[paths.fallbackWasm], true);
+        try {
+          const result = await WebAssembly.instantiate(fallback, imports);
+          send({ type: "fallback-wasm" });
+          return result.instance.exports;
+        } catch (fallbackError) {
+          const primaryMessage = primaryError instanceof Error ? primaryError.message : "unknown primary WASM error";
+          const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "unknown fallback WASM error";
+          throw new Error(`Pinned primary and fallback WASM failed: ${primaryMessage}; ${fallbackMessage}`);
+        }
+      }
+    };
     const options: V86Options = {
-      wasm_path: assetPath(base, paths.wasm),
-      bios: { url: assetPath(base, paths.bios) },
-      vga_bios: { url: assetPath(base, paths.vgaBios) },
-      bzimage: { url: assetPath(base, guest.assetPaths.kernel) },
-      initrd: { url: assetPath(base, guest.assetPaths.initrd) },
+      wasm_fn: wasmFn,
+      bios: { buffer: bios },
+      vga_bios: { buffer: vgaBios },
+      bzimage: { buffer: kernel },
+      initrd: { buffer: initrd },
       filesystem: {
         basefs: assetPath(base, guest.assetPaths.filesystemJson),
-        baseurl: assetPath(base, guest.assetPaths.filesystemBlobs),
+        baseurl: assetPath(base, guest.assetPaths.filesystemBlobs, true),
       },
       memory_size: guest.memoryBytes,
       cmdline: guest.kernelCommandLine,
@@ -296,14 +538,17 @@ function handleRequest(data: unknown) {
         fail("Guest manifest URL is outside the pinned release");
         return;
       }
+      currentColumns = request.cols;
+      currentRows = request.rows;
+      currentLocale = request.locale;
       startRequested = true;
-      void start(manifestUrl.href, request.cols, request.rows, request.locale);
+      void start(manifestUrl.href);
     } catch {
       fail("Guest manifest URL is invalid");
     }
   } else if (request.type === "input") {
-    if (!(request.bytes instanceof Uint8Array) || !emulator || !guestReady) {
-      fail("Guest serial input arrived before the control daemon was ready");
+    if (!(request.bytes instanceof Uint8Array) || !emulator || !controlReadySent) {
+      fail("Guest serial input arrived before the control daemon and initial resize were ready");
       return;
     }
     if (request.bytes.byteLength === 0) return;
@@ -329,7 +574,7 @@ function handleRequest(data: unknown) {
     }
     currentColumns = request.cols;
     currentRows = request.rows;
-    if (guestReady) sendControl({ op: "resize", cols: currentColumns, rows: currentRows });
+    sendDesiredResize();
   } else if (request.type === "set-language") {
     if (request.locale !== "en" && request.locale !== "ru") {
       fail("Guest locale is invalid");
@@ -354,6 +599,8 @@ function handleRequest(data: unknown) {
 async function dispose(): Promise<void> {
   if (disposalPromise) return disposalPromise;
   disposed = true;
+  if (resizeTimer !== null) clearTimeout(resizeTimer);
+  resizeTimer = null;
   disposalPromise = (async () => {
     const current = emulator;
     emulator = null;
@@ -361,6 +608,7 @@ async function dispose(): Promise<void> {
     outputBuffer = new Uint8Array(0);
     outputLength = 0;
     controlDecoder = null;
+    manifestAssets.clear();
     send({ type: "disposed" });
   })();
   return disposalPromise;

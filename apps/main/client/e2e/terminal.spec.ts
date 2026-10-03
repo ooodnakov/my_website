@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
 
@@ -417,14 +418,28 @@ test("the opt-in worker rejects a manifest without its content-derived guest ide
 test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
   test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
   test.setTimeout(240_000);
+  const workerUrls: string[] = [];
+  const wasmUrls: string[] = [];
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/browser-os/") && url.pathname.endsWith(".wasm")) wasmUrls.push(url.href);
+  });
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto("/en");
   const screen = page.locator(".xterm-screen");
   const mobileClear = page.locator(".terminal-mobile-bar").getByRole("button", { name: "clear", exact: true });
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect(mobileClear).toBeDisabled();
   await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
   await expect(mobileClear).toBeDisabled();
+  const origin = new URL(page.url()).origin;
+  expect(workerUrls.length).toBeGreaterThan(0);
+  expect(workerUrls.every((url) => new URL(url).origin === origin)).toBe(true);
+  expect(wasmUrls.some((url) => new URL(url).pathname.endsWith("/v86.wasm"))).toBe(true);
+  expect(wasmUrls.every((url) => new URL(url).origin === origin)).toBe(true);
 
   const input = page.locator(".xterm-helper-textarea");
   await input.click();
@@ -442,32 +457,71 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   expect(rows.some((line) => line.startsWith(" ") && line.trim() === "C")).toBe(true);
 
 
-  await page.keyboard.type("sleep 30");
+  await page.keyboard.type("sleep 30 & sleep_pid=$!; printf 'INTERRUPT_READY\\n'; wait \"$sleep_pid\"");
   await page.keyboard.press("Enter");
-  await page.waitForTimeout(500);
+  await expect(screen).toContainText("INTERRUPT_READY", { timeout: 30_000 });
   await page.keyboard.press("Control+C");
   await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
 });
 
-test("a corrupt primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
+test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
   test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
   test.setTimeout(240_000);
   const workerUrls: string[] = [];
+  let fallbackRequested = false;
+  const malformedPrimary = Buffer.from([0xff, 0x00, 0x01]);
   page.on("worker", (worker) => workerUrls.push(worker.url()));
-  await page.route("**/browser-os/**/v86.wasm", (route) => route.fulfill({
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/v86/v86-fallback.wasm")) fallbackRequested = true;
+  });
+  await page.route("**/browser-os/**/manifest.json", async (route) => {
+    const response = await route.fetch();
+    const manifest = await response.json();
+    manifest.assets["v86/v86.wasm"] = {
+      bytes: malformedPrimary.byteLength,
+      sha256: createHash("sha256").update(malformedPrimary).digest("hex"),
+    };
+    await route.fulfill({ response, json: manifest });
+  });
+  await page.route("**/browser-os/**/v86/v86.wasm", (route) => route.fulfill({
     status: 200,
     contentType: "application/wasm",
-    body: Buffer.from([0, 1, 2, 3]),
+    body: malformedPrimary,
   }));
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await expect(page.getByText("Guest shell ready", { exact: true })).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText("Verified fallback WASM selected after primary initialization failed.", { exact: true })).toBeVisible();
+  expect(fallbackRequested).toBe(true);
   expect(workerUrls.length).toBeGreaterThan(0);
   const screen = page.locator(".xterm-screen");
   await page.locator(".xterm-helper-textarea").click();
   await page.keyboard.type("printf 'fallback-pid=%s\\n' \"$$\"");
   await page.keyboard.press("Enter");
-  await expect(screen).toContainText(/fallback-pid=\d+/, { timeout: 30_000 });
+  await expect(screen).toContainText(/fallback-pid=\\d+/, { timeout: 30_000 });
+});
+
+test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
+  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
+  test.setTimeout(240_000);
+  let workerCreations = 0;
+  page.on("worker", () => { workerCreations += 1; });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  expect(page.workers()).toHaveLength(1);
+  const workerCountBeforeReset = workerCreations;
+  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  expect(page.workers()).toHaveLength(1);
+
+  await page.evaluate(() => {
+    history.pushState({}, "", "/__terminal-away");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(() => page.workers().length).toBe(0);
 });

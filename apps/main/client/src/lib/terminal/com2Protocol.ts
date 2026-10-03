@@ -71,6 +71,79 @@ function isShellState(value: unknown): value is ShellState {
   return value === "cleanPrompt" || value === "editing" || value === "busy" || value === "unknown";
 }
 
+function skipJsonString(text: string, start: number): number {
+  let index = start + 1;
+  while (index < text.length) {
+    if (text[index] === "\\") index += 2;
+    else if (text[index++] === "\"") return index;
+  }
+  return text.length;
+}
+
+function skipJsonValue(text: string, start: number): number {
+  const first = text[start];
+  if (first === "\"") return skipJsonString(text, start);
+  if (first !== "{" && first !== "[") {
+    let index = start;
+    while (index < text.length && /[\s,}]/.test(text[index]) === false) index += 1;
+    return index;
+  }
+  const closing: string[] = [first === "{" ? "}" : "]"];
+  let index = start + 1;
+  while (index < text.length && closing.length > 0) {
+    const current = text[index];
+    if (current === "\"") {
+      index = skipJsonString(text, index);
+      continue;
+    }
+    if (current === "{") closing.push("}");
+    else if (current === "[") closing.push("]");
+    else if (current === "}" || current === "]") {
+      if (closing.pop() !== current) return text.length;
+      if (closing.length === 0) return index + 1;
+    }
+    index += 1;
+  }
+  return text.length;
+}
+
+function hasDuplicateTopLevelKeys(text: string): boolean {
+  let index = 0;
+  const skipWhitespace = () => {
+    while (/\s/.test(text[index] ?? "")) index += 1;
+  };
+  skipWhitespace();
+  if (text[index++] !== "{") return false;
+  const keys = new Set<string>();
+  while (index < text.length) {
+    skipWhitespace();
+    if (text[index] === "}") return false;
+    if (text[index] !== "\"") return false;
+    const keyStart = index;
+    index = skipJsonString(text, index);
+    let value: unknown;
+    try {
+      value = JSON.parse(text.slice(keyStart, index));
+    } catch {
+      return false;
+    }
+    if (typeof value !== "string") return false;
+    if (keys.has(value)) return true;
+    keys.add(value);
+    skipWhitespace();
+    if (text[index++] !== ":") return false;
+    skipWhitespace();
+    index = skipJsonValue(text, index);
+    skipWhitespace();
+    if (text[index] === ",") {
+      index += 1;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 function parseGuestFrame(value: unknown, sessionId: string): { seq: number; frame: GuestControlFrame } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const frame = value as Record<string, unknown>;
@@ -167,9 +240,16 @@ export class Com2Decoder {
       if (payloadLength < 1 || payloadLength > MAX_PAYLOAD_BYTES) this.reject("frame length is invalid");
       const frameLength = HEADER_BYTES + payloadLength;
       if (this.length < frameLength) return;
+      let payloadText: string;
+      try {
+        payloadText = this.textDecoder.decode(this.buffer.subarray(HEADER_BYTES, frameLength));
+      } catch {
+        this.reject("frame is not valid UTF-8 JSON");
+      }
+      if (hasDuplicateTopLevelKeys(payloadText)) this.reject("frame contains duplicate JSON keys");
       let value: unknown;
       try {
-        value = JSON.parse(this.textDecoder.decode(this.buffer.subarray(HEADER_BYTES, frameLength)));
+        value = JSON.parse(payloadText);
       } catch {
         this.reject("frame is not valid UTF-8 JSON");
       }

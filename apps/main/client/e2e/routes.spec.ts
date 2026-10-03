@@ -55,8 +55,11 @@ test("Browser OS release assets are all served with manifest hashes", async ({ r
     "alpine/vmlinuz",
     "alpine/initramfs",
     "alpine/9p/fs.json",
+    "v86/seabios.bin",
+    "v86/vgabios.bin",
     "v86/libv86.mjs",
     "v86/v86.wasm",
+    "v86/v86-fallback.wasm",
   ];
   for (const assetPath of requiredAssets) {
     expect(manifest.assets[assetPath], assetPath).toBeDefined();

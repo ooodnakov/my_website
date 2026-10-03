@@ -29,6 +29,7 @@ export type V86WorkerResponse =
   | { type: "portfolio-action"; guestSeq: number; requestId: number; action: "open" | "copyContact"; linkId: PortfolioLinkId }
   | { type: "control-error"; message: string }
   | { type: "error"; message: string }
+  | { type: "fallback-wasm" }
   | { type: "disposed" };
 
 export interface V86TerminalSessionOptions {
@@ -42,7 +43,8 @@ export interface V86TerminalSessionOptions {
   onOpenCv?: () => boolean;
   onCopyContact?: () => boolean;
   onShellStateChange?: (state: ShellState) => void;
-  onPortfolioActionRequest?: (action: "open" | "copyContact", linkId: PortfolioLinkId) => boolean;
+  onPortfolioActionRequest?: (action: "open" | "copyContact", linkId: PortfolioLinkId, requestId: number) => boolean;
+  onRuntimeWarning?: (message: string) => void;
 }
 
 export class V86TerminalSession implements TerminalSession {
@@ -113,7 +115,8 @@ export class V86TerminalSession implements TerminalSession {
         return;
       }
       if (this.disposed || this.state.status === "failed") return;
-      if (data.type === "progress") this.options.onProgress?.(data.loaded, data.total);
+      else if (data.type === "fallback-wasm") this.options.onRuntimeWarning?.("Verified fallback WASM selected after primary initialization failed.");
+      else if (data.type === "progress") this.options.onProgress?.(data.loaded, data.total);
       else if (data.type === "output") this.emit(data.bytes);
       else if (data.type === "control-ready") {
         this.inputReady = true;
@@ -146,7 +149,7 @@ export class V86TerminalSession implements TerminalSession {
           && data.requestId <= MAX_CONTROL_SEQUENCE) {
           this.lastPortfolioRequestId = data.requestId;
           try {
-            accepted = this.options.onPortfolioActionRequest?.(data.action, data.linkId) ?? false;
+            accepted = this.options.onPortfolioActionRequest?.(data.action, data.linkId, data.requestId) ?? false;
           } catch {
             accepted = false;
           }

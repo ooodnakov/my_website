@@ -92,6 +92,17 @@ assert.throws(
   /session, version, operation, fields, or values are invalid/,
 );
 
+const duplicatePayload = new TextEncoder().encode(
+  `{"v":1,"sessionId":"${sessionId}","seq":1,"op":"error","op":"error","code":"guest"}`,
+);
+const duplicateFrame = new Uint8Array(duplicatePayload.byteLength + 6);
+duplicateFrame.set([0x42, 0x4f, 0x53, 0x31, duplicatePayload.byteLength >>> 8, duplicatePayload.byteLength & 0xff]);
+duplicateFrame.set(duplicatePayload, 6);
+assert.throws(
+  () => new Com2Decoder(sessionId).push(duplicateFrame, () => undefined),
+  /duplicate JSON keys/,
+);
+
 const outOfBoundsDecoder = new Com2Decoder(sessionId);
 assert.throws(
   () => outOfBoundsDecoder.push(guestFrame(MAX_CONTROL_SEQUENCE + 1, { op: "ready", guestBuildId, cols: 80, rows: 24 }), () => undefined),

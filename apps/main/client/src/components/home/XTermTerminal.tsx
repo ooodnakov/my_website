@@ -21,9 +21,11 @@ export interface XTermTerminalHandle {
   runCommand: (command: VisitorCommand) => boolean;
 }
 
-type PendingPortfolioAction =
-  | { action: "open"; href: string; label: string }
-  | { action: "copyContact"; label: string };
+type PendingPortfolioAction = {
+  sessionToken: object;
+  requestId: number;
+  label: string;
+} & ({ action: "open"; href: string } | { action: "copyContact" });
 const PORTFOLIO_TARGETS: Record<PortfolioLinkId, (language: Language) => string> = {
   "quick-cv": (language) => `/cv/${language}`,
   "quick-pdf-en": () => "/cv-pdf/en",
@@ -58,12 +60,46 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   const termInstanceRef = useRef<Terminal | null>(null);
   const languageRef = useRef(lang);
   const pendingPortfolioActionRef = useRef<PendingPortfolioAction | null>(null);
+  const activeSessionTokenRef = useRef<object | null>(null);
   const [startupFailed, setStartupFailed] = useState(false);
   const [osMode, setOsMode] = useState(false);
   const [resetCount, setResetCount] = useState(0);
   const [sessionState, setSessionState] = useState<TerminalSessionState>({ status: 'idle' });
   const [downloadProgress, setDownloadProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [pendingPortfolioAction, setPendingPortfolioAction] = useState<PendingPortfolioAction | null>(null);
+  const [runtimeWarning, setRuntimeWarning] = useState<string | null>(null);
+  const [nativeActionStatus, setNativeActionStatus] = useState<string | null>(null);
+
+  const clearPendingPortfolioAction = () => {
+    pendingPortfolioActionRef.current = null;
+    setPendingPortfolioAction(null);
+  };
+  const reportNativeActionStatus = (sessionToken: object, english: string, russian: string) => {
+    if (activeSessionTokenRef.current === sessionToken) setNativeActionStatus(languageRef.current === "ru" ? russian : english);
+  };
+  const openSafeLink = (uri: string): boolean => {
+    if (!isSafeTerminalLink(uri, window.location.href)) return false;
+    window.open(uri, "_blank", "noopener,noreferrer");
+    return true;
+  };
+  const copyPrimaryContact = (sessionToken: object): boolean => {
+    if (activeSessionTokenRef.current !== sessionToken) return false;
+    try {
+      const clipboard = navigator.clipboard?.writeText("ooodnakov@yandex.ru");
+      if (!clipboard) {
+        reportNativeActionStatus(sessionToken, "Clipboard access is unavailable.", "Буфер обмена недоступен.");
+        return false;
+      }
+      void clipboard.then(
+        () => reportNativeActionStatus(sessionToken, "Contact copied.", "Контакт скопирован."),
+        () => reportNativeActionStatus(sessionToken, "Clipboard copy failed.", "Не удалось скопировать контакт."),
+      );
+      return true;
+    } catch {
+      reportNativeActionStatus(sessionToken, "Clipboard copy failed.", "Не удалось скопировать контакт.");
+      return false;
+    }
+  };
   useImperativeHandle(ref, () => ({
     runCommand: (command: VisitorCommand) => sessionRef.current?.runVisitorCommand(command) ?? false,
   }), []);
@@ -71,21 +107,6 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    const openSafeLink = (uri: string) => {
-      if (!isSafeTerminalLink(uri, window.location.href)) return;
-      window.open(uri, '_blank', 'noopener,noreferrer');
-    };
-
-    const copyPrimaryContact = () => {
-      try {
-        const pending = navigator.clipboard?.writeText("ooodnakov@yandex.ru");
-        if (!pending) return false;
-        void pending.catch(() => undefined);
-        return true;
-      } catch {
-        return false;
-      }
-    };
 
     const term = new Terminal({
       cursorBlink: true,
@@ -119,8 +140,11 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
     termInstanceRef.current = term;
 
     let disposed = false;
+    const sessionToken = {};
     pendingPortfolioActionRef.current = null;
     setPendingPortfolioAction(null);
+    setNativeActionStatus(null);
+    setRuntimeWarning(null);
     const session = osMode
       ? new V86TerminalSession({
           columns: term.cols,
@@ -129,26 +153,38 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
           onStateChange: (state) => {
             setSessionState(state);
             if (state.status === 'failed') setStartupFailed(true);
+            if ((state.status === "failed" || state.status === "disposed")
+              && activeSessionTokenRef.current === sessionToken) {
+              activeSessionTokenRef.current = null;
+              clearPendingPortfolioAction();
+            }
           },
           onProgress: (loaded, total) => setDownloadProgress({ loaded, total }),
+          onRuntimeWarning: setRuntimeWarning,
           onOpenCv: () => {
-            openSafeLink(`/cv/${languageRef.current}`);
-            return true;
+            if (activeSessionTokenRef.current !== sessionToken) return false;
+            const opened = openSafeLink(`/cv/${languageRef.current}`);
+            reportNativeActionStatus(
+              sessionToken,
+              opened ? "Open request sent; browser popup settings may block it." : "The link was rejected.",
+              opened ? "Запрос на открытие отправлен; браузер может заблокировать окно." : "Ссылка отклонена.",
+            );
+            return opened;
           },
-          onCopyContact: copyPrimaryContact,
-          onPortfolioActionRequest: (action, linkId) => {
-            if (pendingPortfolioActionRef.current) return false;
+          onCopyContact: () => copyPrimaryContact(sessionToken),
+          onPortfolioActionRequest: (action, linkId, requestId) => {
+            if (activeSessionTokenRef.current !== sessionToken || pendingPortfolioActionRef.current) return false;
             if (action === "open") {
               if (!Object.prototype.hasOwnProperty.call(PORTFOLIO_TARGETS, linkId)) return false;
               const href = PORTFOLIO_TARGETS[linkId](languageRef.current);
               if (!isSafeTerminalLink(href, window.location.href)) return false;
-              const pending = { action: "open" as const, href, label: linkId };
+              const pending = { action: "open" as const, href, label: linkId, requestId, sessionToken };
               pendingPortfolioActionRef.current = pending;
               setPendingPortfolioAction(pending);
               return true;
             }
             if (action !== "copyContact" || linkId !== "quick-mail") return false;
-            const pending = { action: "copyContact" as const, label: linkId };
+            const pending = { action: "copyContact" as const, label: linkId, requestId, sessionToken };
             pendingPortfolioActionRef.current = pending;
             setPendingPortfolioAction(pending);
             return true;
@@ -156,6 +192,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
         })
       : new LegacyTerminalSession({ terminal: term, language: lang, onStateChange: setSessionState });
     sessionRef.current = session;
+    activeSessionTokenRef.current = osMode ? sessionToken : null;
     const unsubscribeOutput = session.subscribeOutput((output) => {
       if (typeof output === "string" || output instanceof Uint8Array) term.write(output);
       else term.clear();
@@ -189,6 +226,8 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
       window.visualViewport?.removeEventListener('resize', handleResize);
       unsubscribeOutput();
       inputBinding?.dispose();
+      if (activeSessionTokenRef.current === sessionToken) activeSessionTokenRef.current = null;
+      pendingPortfolioActionRef.current = null;
       session.dispose();
       if (sessionRef.current === session) sessionRef.current = null;
       term.dispose();
@@ -210,8 +249,19 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   const resetGuest = () => {
     const session = sessionRef.current;
     if (!(session instanceof V86TerminalSession)) return;
+    activeSessionTokenRef.current = null;
+    clearPendingPortfolioAction();
+    setNativeActionStatus(null);
+    setRuntimeWarning(null);
     session.dispose();
     void session.whenDisposed().then(() => setResetCount((count) => count + 1));
+  };
+  const stopGuest = () => {
+    activeSessionTokenRef.current = null;
+    clearPendingPortfolioAction();
+    setNativeActionStatus(null);
+    setRuntimeWarning(null);
+    setOsMode(false);
   };
 
   return (
@@ -247,25 +297,30 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
           <button type="button" onClick={() => {
             const pending = pendingPortfolioActionRef.current;
             if (!pending) return;
-            pendingPortfolioActionRef.current = null;
-            setPendingPortfolioAction(null);
+            clearPendingPortfolioAction();
+            if (pending.sessionToken !== activeSessionTokenRef.current) return;
+            if (sessionState.status !== "ready") {
+              reportNativeActionStatus(
+                pending.sessionToken,
+                "The guest session is no longer ready.",
+                "Гостевая сессия больше не готова.",
+              );
+              return;
+            }
             if (pending.action === "open") {
-              if (isSafeTerminalLink(pending.href, window.location.href)) window.open(pending.href, "_blank", "noopener,noreferrer");
+              const opened = openSafeLink(pending.href);
+              reportNativeActionStatus(
+                pending.sessionToken,
+                opened ? "Open request sent; browser popup settings may block it." : "The link was rejected.",
+                opened ? "Запрос на открытие отправлен; браузер может заблокировать окно." : "Ссылка отклонена.",
+              );
             } else {
-              try {
-                const clipboard = navigator.clipboard?.writeText("ooodnakov@yandex.ru");
-                void clipboard?.catch(() => undefined);
-              } catch {
-                // Unsupported clipboard APIs fail closed after consuming this confirmation.
-              }
+              copyPrimaryContact(pending.sessionToken);
             }
           }}>
             {lang === "ru" ? "Разрешить" : "Allow"}
           </button>
-          <button type="button" onClick={() => {
-            pendingPortfolioActionRef.current = null;
-            setPendingPortfolioAction(null);
-          }}>
+          <button type="button" onClick={clearPendingPortfolioAction}>
             {lang === "ru" ? "Отклонить" : "Deny"}
           </button>
         </div>
@@ -288,10 +343,12 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
             {sessionState.status === 'failed' && (
               <span role="alert">{sessionState.error?.message}</span>
             )}
+            {runtimeWarning && <span role="status">{runtimeWarning}</span>}
+            {nativeActionStatus && <span role="status">{nativeActionStatus}</span>}
             <button type="button" onClick={resetGuest} disabled={sessionState.status === 'disposed'}>
               {lang === 'ru' ? 'Перезапустить' : 'Reset'}
             </button>
-            <button type="button" onClick={() => setOsMode(false)}>
+            <button type="button" onClick={stopGuest}>
               {lang === 'ru' ? 'Остановить · лёгкий режим' : 'Stop · lightweight mode'}
             </button>
           </>

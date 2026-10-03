@@ -11,7 +11,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "test:terminal": "tsx client/src/lib/terminal/__tests__/terminal.test.ts && tsx client/src/lib/terminal/__tests__/com2Protocol.test.ts && tsx client/src/lib/terminal/__tests__/v86Session.test.ts",
+    "test:terminal": "tsx client/src/lib/terminal/__tests__/terminal.test.ts && tsx client/src/lib/terminal/__tests__/com2Protocol.test.ts && tsx client/src/lib/terminal/__tests__/v86Session.test.ts && tsx client/src/lib/terminal/__tests__/v86Worker.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:production": "PLAYWRIGHT_TEST_PRODUCTION=1 playwright test"
   },
