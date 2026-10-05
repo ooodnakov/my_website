@@ -41,21 +41,23 @@ export type GuestAction = "tour" | "plugins" | "links" | "projects" | "contact" 
 export type GuestControlFrame =
   | { op: "ready"; guestBuildId: string; cols: number; rows: number }
   | { op: "shellReady"; guestBuildId: string }
-  | { op: "shellState"; inputEpoch: number; state: ShellState }
-  | { op: "inputEpochAck"; inputEpoch: number; state: ShellState }
+  | { op: "shellState"; state: ShellState }
+  | { op: "inputFenceAck"; fenceId: number; inputBytes: number; state: ShellState }
   | { op: "resizeAck"; cols: number; rows: number }
   | { op: "localeAck"; locale: "en" | "ru" }
   | { op: "portfolioAction"; requestId: number; action: "open" | "copyContact"; linkId: PortfolioLinkId }
-  | { op: "ack"; ackSeq: number; status: "ok" | "rejected" }
+  | { op: "ack"; ackSeq: number; status: "accepted" | "rejected" }
   | { op: "error"; code: "badFrame" | "badSession" | "badSequence" | "badOperation" | "badValue" | "internal" };
 
 export type HostControlFrame =
   | { op: "hello"; cols: number; rows: number }
-  | { op: "inputEpoch"; inputEpoch: number }
+  | { op: "inputFence"; fenceId: number; inputBytes: number }
   | { op: "resize"; cols: number; rows: number }
   | { op: "setLocale"; locale: "en" | "ru" }
-  | { op: "dispatchAction"; action: GuestAction; inputEpoch: number; requestId: number }
-  | { op: "ack"; ackSeq: number; status: "ok" | "rejected" };
+  | { op: "dispatchAction"; action: GuestAction; requestId: number; fenceId: number; inputBytes: number }
+  | { op: "ack"; ackSeq: number; status: "queued" | "rejected" };
+
+const guestActionSet = new Set<string>(["tour", "plugins", "links", "projects", "contact", "github", "a", "ls", "eza", "clear"]);
 
 
 function isIntegerInRange(value: unknown, min: number, max: number): value is number {
@@ -65,6 +67,34 @@ function isIntegerInRange(value: unknown, min: number, max: number): value is nu
 function hasExactFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
   const keys = Object.keys(value);
   return keys.length === fields.length && keys.every((key) => fields.includes(key));
+}
+function isHostControlFrame(value: unknown): value is HostControlFrame {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const frame = value as Record<string, unknown>;
+  switch (frame.op) {
+    case "hello":
+    case "resize":
+      return hasExactFields(frame, ["op", "cols", "rows"])
+        && isIntegerInRange(frame.cols, 2, 300) && isIntegerInRange(frame.rows, 2, 120);
+    case "inputFence":
+      return hasExactFields(frame, ["op", "fenceId", "inputBytes"])
+        && isIntegerInRange(frame.fenceId, 1, MAX_SEQUENCE)
+        && isIntegerInRange(frame.inputBytes, 0, MAX_SEQUENCE);
+    case "setLocale":
+      return hasExactFields(frame, ["op", "locale"]) && (frame.locale === "en" || frame.locale === "ru");
+    case "dispatchAction":
+      return hasExactFields(frame, ["op", "action", "requestId", "fenceId", "inputBytes"])
+        && typeof frame.action === "string" && guestActionSet.has(frame.action)
+        && isIntegerInRange(frame.requestId, 1, MAX_SEQUENCE)
+        && isIntegerInRange(frame.fenceId, 1, MAX_SEQUENCE)
+        && isIntegerInRange(frame.inputBytes, 0, MAX_SEQUENCE);
+    case "ack":
+      return hasExactFields(frame, ["op", "ackSeq", "status"])
+        && isIntegerInRange(frame.ackSeq, 1, MAX_SEQUENCE)
+        && (frame.status === "queued" || frame.status === "rejected");
+    default:
+      return false;
+  }
 }
 
 function isShellState(value: unknown): value is ShellState {
@@ -162,13 +192,13 @@ function parseGuestFrame(value: unknown, sessionId: string): { seq: number; fram
         || typeof frame.guestBuildId !== "string" || !BUILD_ID_PATTERN.test(frame.guestBuildId)) return null;
       return { seq: frame.seq, frame: { op: "shellReady", guestBuildId: frame.guestBuildId } };
     case "shellState":
-      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "inputEpoch", "state"])
-        || !isIntegerInRange(frame.inputEpoch, 0, MAX_SEQUENCE) || !isShellState(frame.state)) return null;
-      return { seq: frame.seq, frame: { op: "shellState", inputEpoch: frame.inputEpoch, state: frame.state } };
-    case "inputEpochAck":
-      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "inputEpoch", "state"])
-        || !isIntegerInRange(frame.inputEpoch, 1, MAX_SEQUENCE) || !isShellState(frame.state)) return null;
-      return { seq: frame.seq, frame: { op: "inputEpochAck", inputEpoch: frame.inputEpoch, state: frame.state } };
+      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "state"]) || !isShellState(frame.state)) return null;
+      return { seq: frame.seq, frame: { op: "shellState", state: frame.state } };
+    case "inputFenceAck":
+      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "fenceId", "inputBytes", "state"])
+        || !isIntegerInRange(frame.fenceId, 1, MAX_SEQUENCE)
+        || !isIntegerInRange(frame.inputBytes, 0, MAX_SEQUENCE) || !isShellState(frame.state)) return null;
+      return { seq: frame.seq, frame: { op: "inputFenceAck", fenceId: frame.fenceId, inputBytes: frame.inputBytes, state: frame.state } };
     case "resizeAck":
       if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "cols", "rows"])
         || !isIntegerInRange(frame.cols, 2, 300) || !isIntegerInRange(frame.rows, 2, 120)) return null;
@@ -186,7 +216,7 @@ function parseGuestFrame(value: unknown, sessionId: string): { seq: number; fram
     case "ack":
       if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "ackSeq", "status"])
         || !isIntegerInRange(frame.ackSeq, 1, MAX_SEQUENCE)
-        || (frame.status !== "ok" && frame.status !== "rejected")) return null;
+        || (frame.status !== "accepted" && frame.status !== "rejected")) return null;
       return { seq: frame.seq, frame: { op: "ack", ackSeq: frame.ackSeq, status: frame.status } };
     case "error":
       if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "code"])
@@ -201,6 +231,7 @@ export function encodeHostControlFrame(sessionId: string, seq: number, frame: Ho
   if (!SESSION_ID_PATTERN.test(sessionId) || !isIntegerInRange(seq, 1, MAX_SEQUENCE)) {
     throw new Error("Invalid COM2 session identity or sequence");
   }
+  if (!isHostControlFrame(frame)) throw new Error("Invalid host COM2 control frame");
   const payload = new TextEncoder().encode(JSON.stringify({ v: 1, sessionId, seq, ...frame }));
   if (payload.byteLength === 0 || payload.byteLength > MAX_PAYLOAD_BYTES) throw new Error("COM2 control frame exceeds the payload limit");
   const result = new Uint8Array(HEADER_BYTES + payload.byteLength);

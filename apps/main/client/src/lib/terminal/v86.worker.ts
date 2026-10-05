@@ -15,6 +15,8 @@ interface GuestManifest {
   guest: {
     memoryBytes: number;
     kernelCommandLine: string;
+    buildIdentityPath: string;
+    buildId: string;
     assetPaths: { kernel: string; initrd: string; filesystemJson: string; filesystemBlobs: string };
   };
   emulator: {
@@ -53,9 +55,9 @@ let controlDecoder: Com2Decoder | null = null;
 let sessionId: string | null = null;
 let hostSequence = 0;
 let guestBuildId = "";
-let latestInputEpoch = 0;
-let acknowledgedInputEpoch = 0;
-let latestShellState: "cleanPrompt" | "editing" | "busy" | "unknown" = "unknown";
+let latestInputBytes = 0;
+let latestFenceId = 0;
+let currentFence: { fenceId: number; inputBytes: number } | null = null;
 let currentColumns = 80;
 let currentRows = 24;
 let currentLocale: "en" | "ru" = "en";
@@ -87,9 +89,7 @@ function failControl(message: string) {
     return;
   }
   controlFailed = true;
-  controlDecoder = null;
-  latestShellState = "unknown";
-  acknowledgedInputEpoch = 0;
+  currentFence = null;
   send({ type: "control-error", message });
 }
 
@@ -134,6 +134,7 @@ function isGuestManifest(value: unknown): value is GuestManifest {
   }
   if (blobCount === 0) return false;
   const requiredPaths = [
+    manifest.guest?.buildIdentityPath,
     guestPaths?.kernel,
     guestPaths?.initrd,
     guestPaths?.filesystemJson,
@@ -147,10 +148,14 @@ function isGuestManifest(value: unknown): value is GuestManifest {
     && manifest.release === EXPECTED_RELEASE
     && manifest.guest?.memoryBytes === 128 * 1024 * 1024
     && manifest.guest.kernelCommandLine === EXPECTED_KERNEL_COMMAND_LINE
+    && manifest.guest?.buildIdentityPath === "alpine/guest-build.json"
+    && typeof manifest.guest.buildId === "string"
+    && /^[0-9a-f]{64}$/.test(manifest.guest.buildId)
+    && (assets as Record<string, ManifestAsset>)[manifest.guest.buildIdentityPath]?.sha256 === manifest.guest.buildId
     && guestPaths?.kernel === "alpine/vmlinuz"
-    && guestPaths.initrd === "alpine/initramfs"
-    && guestPaths.filesystemJson === "alpine/9p/fs.json"
-    && guestPaths.filesystemBlobs === "alpine/9p/blob/"
+    && guestPaths?.initrd === "alpine/initramfs"
+    && guestPaths?.filesystemJson === "alpine/9p/fs.json"
+    && guestPaths?.filesystemBlobs === "alpine/9p/blob/"
     && manifest.emulator?.version === "0.5.469"
     && emulatorPaths?.bios === "v86/seabios.bin"
     && emulatorPaths.vgaBios === "v86/vgabios.bin"
@@ -363,20 +368,15 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number) {
     shellReady = true;
     send({ type: "shell-ready" });
   } else if (frame.op === "shellState") {
-    if (frame.inputEpoch !== latestInputEpoch || frame.inputEpoch !== acknowledgedInputEpoch) {
-      failControl("Guest shell state is not tied to the latest input epoch");
+    send({ type: "shell-state", state: frame.state });
+  } else if (frame.op === "inputFenceAck") {
+    if (frame.fenceId < latestFenceId) return;
+    if (!currentFence || frame.fenceId !== currentFence.fenceId || frame.inputBytes !== currentFence.inputBytes) {
+      failControl("Guest input fence acknowledgement is stale or mismatched");
       return;
     }
-    latestShellState = frame.state;
-    send({ type: "shell-state", inputEpoch: frame.inputEpoch, state: frame.state, acknowledged: false });
-  } else if (frame.op === "inputEpochAck") {
-    if (frame.inputEpoch !== latestInputEpoch) {
-      failControl("Guest input acknowledgement is stale");
-      return;
-    }
-    acknowledgedInputEpoch = frame.inputEpoch;
-    latestShellState = frame.state;
-    send({ type: "shell-state", inputEpoch: frame.inputEpoch, state: frame.state, acknowledged: true });
+    currentFence = null;
+    send({ type: "input-fence-ack", fenceId: frame.fenceId, inputBytes: frame.inputBytes, state: frame.state });
   } else if (frame.op === "portfolioAction") {
     send({
       type: "portfolio-action",
@@ -385,6 +385,8 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number) {
       action: frame.action,
       linkId: frame.linkId,
     });
+  } else if (frame.op === "ack") {
+    failControl("Guest acknowledged a host action that was never dispatched");
   } else if (frame.op === "error") {
     failControl(`Guest control protocol error: ${frame.code}`);
   }
@@ -463,6 +465,7 @@ async function start(manifestUrl: string) {
     const base = new URL("./", response.url);
     const paths = value.emulator.assetPaths;
     const guest = value.guest;
+    await fetchVerifiedAsset(base, guest.buildIdentityPath, value.assets[guest.buildIdentityPath]);
     const [bios, vgaBios, kernel, initrd] = await Promise.all([
       fetchVerifiedAsset(base, paths.bios, value.assets[paths.bios]),
       fetchVerifiedAsset(base, paths.vgaBios, value.assets[paths.vgaBios]),
@@ -470,7 +473,7 @@ async function start(manifestUrl: string) {
       fetchVerifiedAsset(base, guest.assetPaths.initrd, value.assets[guest.assetPaths.initrd]),
     ]);
     if (disposed) return;
-    guestBuildId = value.assets[guest.assetPaths.filesystemJson].sha256;
+    guestBuildId = guest.buildId;
     manifestAssets = new Map(Object.entries(value.assets));
     installAssetIntegrityXHR(base, manifestAssets);
     const wasmFn: NonNullable<V86Options["wasm_fn"]> = async (imports) => {
@@ -552,17 +555,20 @@ function handleRequest(data: unknown) {
       return;
     }
     if (request.bytes.byteLength === 0) return;
-    if (!Number.isInteger(request.inputEpoch)
-      || request.inputEpoch !== latestInputEpoch + 1
-      || request.inputEpoch > MAX_CONTROL_SEQUENCE) {
-      fail("Host input epoch is stale or out of order");
-      return;
-    }
     try {
       emulator.serial_send_bytes(0, request.bytes);
-      latestInputEpoch = request.inputEpoch;
-      latestShellState = "unknown";
-      sendControl({ op: "inputEpoch", inputEpoch: request.inputEpoch });
+      latestInputBytes += request.bytes.byteLength;
+      if (!Number.isSafeInteger(latestInputBytes) || latestInputBytes > MAX_CONTROL_SEQUENCE) {
+        failControl("Guest input byte count exceeded the control protocol limit");
+        return;
+      }
+      if (latestFenceId >= MAX_CONTROL_SEQUENCE) {
+        failControl("Guest input fence sequence limit reached");
+        return;
+      }
+      const fence = { fenceId: ++latestFenceId, inputBytes: latestInputBytes };
+      currentFence = fence;
+      sendControl({ op: "inputFence", ...fence });
     } catch {
       fail("Unable to send guest serial input");
     }
@@ -583,10 +589,10 @@ function handleRequest(data: unknown) {
     currentLocale = request.locale;
     if (guestReady) sendControl({ op: "setLocale", locale: currentLocale });
   } else if (request.type === "dispatch-action") {
-    failControl("Host quick actions are disabled until Systems agrees and implements a guest-enforced input fence");
+    failControl("Host quick actions remain disabled until genuine guest consumption and execution proof is available");
   } else if (request.type === "portfolio-ack") {
     if (!Number.isInteger(request.ackSeq) || request.ackSeq < 1 || request.ackSeq > MAX_CONTROL_SEQUENCE
-      || (request.status !== "ok" && request.status !== "rejected")) {
+      || (request.status !== "queued" && request.status !== "rejected")) {
       fail("Portfolio action acknowledgement is invalid");
       return;
     }

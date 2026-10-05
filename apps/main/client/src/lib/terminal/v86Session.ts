@@ -13,11 +13,11 @@ function isVisitorCommand(value: unknown): value is VisitorCommand {
 
 export type V86WorkerRequest =
   | { type: "start"; manifestUrl: string; cols: number; rows: number; locale: Language }
-  | { type: "input"; bytes: Uint8Array; inputEpoch: number }
+  | { type: "input"; bytes: Uint8Array }
   | { type: "resize"; cols: number; rows: number }
   | { type: "set-language"; locale: Language }
-  | { type: "dispatch-action"; action: GuestAction; inputEpoch: number; requestId: number }
-  | { type: "portfolio-ack"; ackSeq: number; status: "ok" | "rejected" }
+  | { type: "dispatch-action"; action: GuestAction; requestId: number; fenceId: number; inputBytes: number }
+  | { type: "portfolio-ack"; ackSeq: number; status: "queued" | "rejected" }
   | { type: "dispose" };
 
 export type V86WorkerResponse =
@@ -25,7 +25,8 @@ export type V86WorkerResponse =
   | { type: "output"; bytes: Uint8Array }
   | { type: "control-ready" }
   | { type: "shell-ready" }
-  | { type: "shell-state"; inputEpoch: number; state: ShellState; acknowledged: boolean }
+  | { type: "shell-state"; state: ShellState }
+  | { type: "input-fence-ack"; fenceId: number; inputBytes: number; state: ShellState }
   | { type: "portfolio-action"; guestSeq: number; requestId: number; action: "open" | "copyContact"; linkId: PortfolioLinkId }
   | { type: "control-error"; message: string }
   | { type: "error"; message: string }
@@ -44,6 +45,7 @@ export interface V86TerminalSessionOptions {
   onCopyContact?: () => boolean;
   onShellStateChange?: (state: ShellState) => void;
   onPortfolioActionRequest?: (action: "open" | "copyContact", linkId: PortfolioLinkId, requestId: number) => boolean;
+  onControlRevoked?: (message: string) => void;
   onRuntimeWarning?: (message: string) => void;
 }
 
@@ -54,20 +56,12 @@ export class V86TerminalSession implements TerminalSession {
     owner: "session-byte-stream",
     sendBytes: (bytes) => {
       if (!this.inputReady || this.disposed || !this.worker) return;
-      if (this.inputEpoch >= MAX_CONTROL_SEQUENCE) {
-        this.inputReady = false;
-        this.setState({ status: "failed", error: new Error("Guest input epoch limit reached") });
-        this.shutdownWorker();
-        return;
-      }
-      const inputEpoch = ++this.inputEpoch;
-      this.quickActionRevokedEpoch = -1;
-      this.shellState = "unknown";
       this.options.onShellStateChange?.("unknown");
       try {
-        this.worker.postMessage({ type: "input", bytes, inputEpoch }, [bytes.buffer]);
+        this.worker.postMessage({ type: "input", bytes }, [bytes.buffer]);
       } catch {
         this.inputReady = false;
+        this.controlAvailable = false;
         this.setState({ status: "failed", error: new Error("Unable to send guest input") });
         this.shutdownWorker();
       }
@@ -86,11 +80,7 @@ export class V86TerminalSession implements TerminalSession {
   private shutdownRequested = false;
   private workerFinished = false;
   private inputReady = false;
-  private inputEpoch = 0;
-  private acknowledgedEpoch = 0;
-  private shellState: ShellState = "unknown";
-  private quickActionRevokedEpoch = -1;
-  private nextActionRequestId = 1;
+  private controlAvailable = false;
   private lastPortfolioRequestId = 0;
   private columns: number;
   private rows: number;
@@ -120,20 +110,16 @@ export class V86TerminalSession implements TerminalSession {
       else if (data.type === "output") this.emit(data.bytes);
       else if (data.type === "control-ready") {
         this.inputReady = true;
+        this.controlAvailable = true;
         this.worker?.postMessage({ type: "resize", cols: this.columns, rows: this.rows });
         this.worker?.postMessage({ type: "set-language", locale: this.language });
       }
       else if (data.type === "shell-ready") {
         this.clearBootTimer();
         this.setState({ status: "ready" });
-      } else if (data.type === "shell-state") {
-        if (data.inputEpoch !== this.inputEpoch) return;
-        if (data.acknowledged) this.acknowledgedEpoch = data.inputEpoch;
-        if (data.inputEpoch === this.acknowledgedEpoch) {
-          if (data.state === "cleanPrompt" && this.quickActionRevokedEpoch === data.inputEpoch) return;
-          this.shellState = data.state;
-          this.options.onShellStateChange?.(data.state);
-        }
+      } else if (data.type === "shell-state" || data.type === "input-fence-ack") {
+        // Shell state is advisory; neither message authorizes host-side command dispatch.
+        this.options.onShellStateChange?.(data.state);
       } else if (data.type === "portfolio-action") {
         let accepted = false;
         const validAction = data.action === "open" || data.action === "copyContact";
@@ -141,6 +127,7 @@ export class V86TerminalSession implements TerminalSession {
         const validPair = data.action !== "copyContact" || data.linkId === "quick-mail";
         if (this.state.status === "ready"
           && this.inputReady
+          && this.controlAvailable
           && validAction
           && validLink
           && validPair
@@ -157,14 +144,15 @@ export class V86TerminalSession implements TerminalSession {
         this.worker?.postMessage({
           type: "portfolio-ack",
           ackSeq: data.guestSeq,
-          status: accepted ? "ok" : "rejected",
+          status: accepted ? "queued" : "rejected",
         } satisfies V86WorkerRequest);
       } else if (data.type === "control-error") {
-        this.quickActionRevokedEpoch = this.inputEpoch;
-        this.shellState = "unknown";
+        this.controlAvailable = false;
+        this.options.onControlRevoked?.(data.message);
         this.options.onShellStateChange?.("unknown");
       } else if (data.type === "error") {
         this.inputReady = false;
+        this.controlAvailable = false;
         this.setState({ status: "failed", error: new Error(data.message) });
         this.shutdownWorker();
       }
@@ -173,6 +161,7 @@ export class V86TerminalSession implements TerminalSession {
       if (!this.disposed) {
         const message = "data" in event ? "The OS worker sent an invalid message" : event.message;
         this.inputReady = false;
+        this.controlAvailable = false;
         this.setState({ status: "failed", error: new Error(message || "The OS worker failed") });
       }
       this.finishWorker();
@@ -252,12 +241,7 @@ export class V86TerminalSession implements TerminalSession {
       || !isVisitorCommand(command)) return false;
     if (command === "open cv.txt") return this.options.onOpenCv?.() ?? false;
     if (command === "copy-contact") return this.options.onCopyContact?.() ?? false;
-    if (this.shellState === "cleanPrompt" && this.acknowledgedEpoch === this.inputEpoch) {
-      this.quickActionRevokedEpoch = this.inputEpoch;
-      this.shellState = "unknown";
-      this.options.onShellStateChange?.("unknown");
-    }
-    // COM2 quick actions stay disabled until Systems ships an agreed guest-enforced input fence.
+    // COM2 quick actions remain disabled until host verification includes real guest consumption and execution proof.
     return false;
   }
 

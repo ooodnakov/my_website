@@ -46,13 +46,16 @@ interface FakeAssetResponse {
 
 class FakeV86 {
   static instances: FakeV86[] = [];
+  static onConstructed: (() => void) | null = null;
   readonly options: Record<string, unknown>;
   readonly sentControlFrames: Uint8Array[] = [];
+  readonly sentSerialInput: Uint8Array[] = [];
   private listeners = new Map<string, (value: never) => void>();
 
   constructor(options: Record<string, unknown>) {
     this.options = options;
     FakeV86.instances.push(this);
+    FakeV86.onConstructed?.();
   }
 
   add_listener(name: string, listener: (value: never) => void): void {
@@ -61,6 +64,7 @@ class FakeV86 {
 
   serial_send_bytes(port: number, bytes: Uint8Array): void {
     if (port === 1) this.sentControlFrames.push(new Uint8Array(bytes));
+    if (port === 0) this.sentSerialInput.push(new Uint8Array(bytes));
   }
 
   trigger(name: string, value: never): void {
@@ -119,6 +123,7 @@ function responseFor(url: string, bytes: Uint8Array, contentType = "application/
 
 function makeAssets(overrides: Record<string, Uint8Array> = {}): Record<string, Uint8Array> {
   return {
+    "alpine/guest-build.json": new TextEncoder().encode('{"schemaVersion":1,"guest":"test"}'),
     "alpine/vmlinuz": new Uint8Array([1, 2, 3]),
     "alpine/initramfs": new Uint8Array([4, 5, 6]),
     "alpine/9p/fs.json": new TextEncoder().encode('{"version":1}'),
@@ -148,12 +153,17 @@ function createHarness(options: {
   omit?: string[];
   pauseAsset?: string;
   corruptResponses?: Record<string, Uint8Array>;
+  manifestBuildId?: string;
 } = {}) {
   FakeV86.instances = [];
+  const stateWaiters = new Set<() => void>();
+  const notifyStateChange = () => stateWaiters.forEach((notify) => notify());
+  FakeV86.onConstructed = notifyStateChange;
   const files = makeAssets(options.assets);
   const manifestAssets = Object.fromEntries(Object.entries(files)
     .filter(([name]) => !options.omit?.includes(name))
     .map(([name, bytes]) => [name, { bytes: bytes.byteLength, sha256: sha256(bytes) }]));
+  const guestBuildId = sha256(files["alpine/guest-build.json"]!);
   const manifest = {
     schemaVersion: 1,
     release: RELEASE,
@@ -161,6 +171,8 @@ function createHarness(options: {
     guest: {
       memoryBytes: 128 * 1024 * 1024,
       kernelCommandLine: "console=ttyS0,115200n8 root=host9p rootfstype=9p rootflags=trans=virtio,version=9p2000.L rw modules=virtio_pci",
+      buildIdentityPath: "alpine/guest-build.json",
+      buildId: options.manifestBuildId ?? guestBuildId,
       assetPaths: {
         kernel: "alpine/vmlinuz",
         initrd: "alpine/initramfs",
@@ -181,6 +193,7 @@ function createHarness(options: {
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const fetchLog: string[] = [];
   const messages: Array<Record<string, unknown>> = [];
+  const workerResultWaiters = new Set<() => void>();
   let releasePause: () => void = () => {};
   let markPauseStarted: () => void = () => {};
   const pauseStarted = new Promise<void>((resolve) => { markPauseStarted = resolve; });
@@ -218,7 +231,10 @@ function createHarness(options: {
       if (id === "./com2Protocol") return moduleObjectProtocol;
       throw new Error(`Unexpected worker import: ${id}`);
     },
-    postMessage: (message: Record<string, unknown>) => messages.push(message),
+    postMessage: (message: Record<string, unknown>) => {
+      messages.push(message);
+      workerResultWaiters.forEach((notify) => notify());
+    },
     addEventListener: (type: string, listener: (event: never) => void) => workerListeners.set(type, listener),
     fetch: async (url: string, _init?: unknown) => activeFetch(url),
     location: new URL(MANIFEST_URL),
@@ -249,11 +265,25 @@ function createHarness(options: {
   const message = workerListeners.get("message");
   assert.ok(message);
   const post = (data: Record<string, unknown>) => message({ data } as never);
-  const waitFor = async (predicate: () => boolean) => {
-    for (let attempt = 0; attempt < 40 && !predicate(); attempt += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    assert.ok(predicate(), "worker did not reach the expected state");
+  const waitFor = async (predicate: () => boolean, description = "worker did not reach the expected state") => {
+    if (predicate()) return;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        stateWaiters.delete(check);
+        workerResultWaiters.delete(check);
+        reject(new Error(description));
+      }, 15_000);
+      const check = () => {
+        if (!predicate()) return;
+        clearTimeout(timeout);
+        stateWaiters.delete(check);
+        workerResultWaiters.delete(check);
+        resolve();
+      };
+      stateWaiters.add(check);
+      workerResultWaiters.add(check);
+      check();
+    });
   };
   const requestStart = () => post({ type: "start", manifestUrl: MANIFEST_URL, cols: 80, rows: 24, locale: "en" });
   const start = async () => {
@@ -283,6 +313,8 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   await harness.start();
   const emulator = FakeV86.instances[0];
   assert.ok(emulator, JSON.stringify(harness.messages));
+  assert.equal(harness.fetchLog.some((url) => url.endsWith("/alpine/guest-build.json")), true,
+    "the declared guest build descriptor is verified before emulator construction");
   emulator.trigger("emulator-ready", undefined as never);
   const hello = framePayload(emulator.sentControlFrames[0]!);
   assert.equal(hello.op, "hello");
@@ -291,7 +323,7 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   harness.post({ type: "resize", cols: 100, rows: 30 });
   harness.injectGuestFrame(String(hello.sessionId), 1, {
     op: "ready",
-    guestBuildId: harness.manifestAssets["alpine/9p/fs.json"].sha256,
+    guestBuildId: harness.manifest.guest.buildId,
     cols: 80,
     rows: 24,
   });
@@ -310,6 +342,38 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
   harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 120, rows: 40 });
   assert.equal(harness.messages.filter((entry) => entry.type === "control-ready").length, 1);
+
+  harness.post({ type: "input", bytes: new Uint8Array([65, 66]) });
+  const firstFence = framePayload(emulator.sentControlFrames.at(-1)!);
+  assert.equal(firstFence.op, "inputFence");
+  assert.equal(firstFence.fenceId, 1);
+  assert.equal(firstFence.inputBytes, 2);
+  harness.injectGuestFrame(String(hello.sessionId), 4, {
+    op: "inputFenceAck", fenceId: 1, inputBytes: 2, state: "cleanPrompt",
+  });
+  const fenceAck = harness.messages.find((entry) => entry.type === "input-fence-ack");
+  assert.equal(fenceAck?.fenceId, 1);
+  assert.equal(fenceAck?.inputBytes, 2);
+  assert.equal(fenceAck?.state, "cleanPrompt");
+
+  harness.post({ type: "input", bytes: new Uint8Array([67]) });
+  const secondFence = framePayload(emulator.sentControlFrames.at(-1)!);
+  assert.equal(secondFence.fenceId, 2);
+  assert.equal(secondFence.inputBytes, 3);
+  harness.injectGuestFrame(String(hello.sessionId), 5, {
+    op: "inputFenceAck", fenceId: 1, inputBytes: 2, state: "cleanPrompt",
+  });
+  assert.equal(harness.messages.filter((entry) => entry.type === "control-error").length, 0,
+    "a valid superseded fence does not authorize an action or revoke the current fence");
+  harness.injectGuestFrame(String(hello.sessionId), 6, {
+    op: "inputFenceAck", fenceId: 2, inputBytes: 3, state: "cleanPrompt",
+  });
+  assert.equal(emulator.sentSerialInput.length, 2, "raw COM1 chunks are delivered independently of COM2 fencing");
+
+  harness.post({ type: "dispatch-action", action: "links", requestId: 1, fenceId: 2, inputBytes: 3 });
+  assert.equal(emulator.sentControlFrames.map(framePayload).some((frame) => frame.op === "dispatchAction"), false,
+    "guest quick-action dispatch remains disabled without execution proof");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-error"), true);
   harness.dispose();
 }
 
@@ -328,7 +392,7 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     "a resize during initial asset loading must survive until the guest hello");
   harness.injectGuestFrame(String(hello.sessionId), 1, {
     op: "ready",
-    guestBuildId: harness.manifestAssets["alpine/9p/fs.json"].sha256,
+    guestBuildId: harness.manifest.guest.buildId,
     cols: 100,
     rows: 30,
   });
@@ -347,6 +411,22 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   const harness = createHarness({ corruptResponses: { "alpine/vmlinuz": new Uint8Array([9, 9, 9]) } });
   await harness.start();
   assert.equal(FakeV86.instances.length, 0, "a mismatched kernel must not reach the emulator");
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true);
+}
+{
+  const harness = createHarness({ corruptResponses: { "alpine/guest-build.json": new Uint8Array([9]) } });
+  await harness.start();
+  assert.equal(FakeV86.instances.length, 0, "the descriptor bytes are verified before emulator construction");
+  assert.equal(harness.fetchLog.some((url) => url.endsWith("/alpine/vmlinuz")), false,
+    "an invalid descriptor prevents later VM asset requests");
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true);
+}
+
+{
+  const harness = createHarness({ manifestBuildId: "f".repeat(64) });
+  await harness.start();
+  assert.equal(FakeV86.instances.length, 0, "manifest identity mismatch fails before VM construction");
+  assert.deepEqual(harness.fetchLog, [MANIFEST_URL], "manifest and descriptor identity must match before asset requests");
   assert.equal(harness.messages.some((entry) => entry.type === "error"), true);
 }
 

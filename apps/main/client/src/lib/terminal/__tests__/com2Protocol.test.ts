@@ -27,28 +27,30 @@ const decoder = new Com2Decoder(sessionId);
 const decoded: Array<{ frame: GuestControlFrame; seq: number }> = [];
 const stream = join(
   guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }),
-  guestFrame(2, { op: "inputEpochAck", inputEpoch: 1, state: "cleanPrompt" }),
+  guestFrame(2, { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" }),
+  guestFrame(3, { op: "ack", ackSeq: 7, status: "accepted" }),
 );
 for (let offset = 0; offset < stream.byteLength; offset += 1) {
   decoder.push(stream.subarray(offset, offset + 1), (frame, seq) => decoded.push({ frame, seq }));
 }
 assert.deepEqual(decoded, [
   { seq: 1, frame: { op: "ready", guestBuildId, cols: 80, rows: 24 } },
-  { seq: 2, frame: { op: "inputEpochAck", inputEpoch: 1, state: "cleanPrompt" } },
+  { seq: 2, frame: { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" } },
+  { seq: 3, frame: { op: "ack", ackSeq: 7, status: "accepted" } },
 ]);
 
 const postCleanDecoder = new Com2Decoder(sessionId);
 const postCleanFrames: Array<{ frame: GuestControlFrame; seq: number }> = [];
 postCleanDecoder.push(join(
   guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }),
-  guestFrame(2, { op: "inputEpochAck", inputEpoch: 1, state: "cleanPrompt" }),
+  guestFrame(2, { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" }),
 ), (frame, seq) => postCleanFrames.push({ frame, seq }));
 assert.throws(
-  () => postCleanDecoder.push(guestFrame(3, { op: "shellState", inputEpoch: 1, state: "cleanPrompt", stale: true }), () => undefined),
+  () => postCleanDecoder.push(guestFrame(3, { op: "shellState", state: "cleanPrompt", stale: true }), () => undefined),
   /Invalid COM2 stream/,
 );
 assert.throws(
-  () => postCleanDecoder.push(guestFrame(3, { op: "shellState", inputEpoch: 1, state: "cleanPrompt" }), () => undefined),
+  () => postCleanDecoder.push(guestFrame(3, { op: "shellState", state: "cleanPrompt" }), () => undefined),
   /Invalid COM2 stream/,
   "a malformed post-clean frame latches the decoder closed instead of resynchronizing",
 );
@@ -79,6 +81,26 @@ assert.throws(
   () => unknownOperationDecoder.push(guestFrame(1, { op: "unknown" }), () => undefined),
   /session, version, operation, fields, or values are invalid/,
 );
+const legacyEpochDecoder = new Com2Decoder(sessionId);
+assert.throws(
+  () => legacyEpochDecoder.push(guestFrame(1, { op: "inputEpochAck", inputEpoch: 1, state: "cleanPrompt" }), () => undefined),
+  /session, version, operation, fields, or values are invalid/,
+  "legacy input epochs are not accepted by the fence protocol",
+);
+
+const advisoryDecoder = new Com2Decoder(sessionId);
+const advisoryFrames: GuestControlFrame[] = [];
+advisoryDecoder.push(guestFrame(1, { op: "shellState", state: "cleanPrompt" }), (frame) => advisoryFrames.push(frame));
+assert.deepEqual(advisoryFrames, [{ op: "shellState", state: "cleanPrompt" }]);
+
+const oversizedFenceDecoder = new Com2Decoder(sessionId);
+assert.throws(
+  () => oversizedFenceDecoder.push(
+    guestFrame(1, { op: "inputFenceAck", fenceId: 1, inputBytes: MAX_CONTROL_SEQUENCE + 1, state: "cleanPrompt" }),
+    () => undefined,
+  ),
+  /session, version, operation, fields, or values are invalid/,
+);
 
 const badIdentityDecoder = new Com2Decoder(sessionId);
 assert.throws(
@@ -89,6 +111,11 @@ assert.throws(
 const badActionDecoder = new Com2Decoder(sessionId);
 assert.throws(
   () => badActionDecoder.push(guestFrame(1, { op: "portfolioAction", requestId: 1, action: "copyContact", linkId: "social-gh" }), () => undefined),
+  /session, version, operation, fields, or values are invalid/,
+);
+const badAckDecoder = new Com2Decoder(sessionId);
+assert.throws(
+  () => badAckDecoder.push(guestFrame(1, { op: "ack", ackSeq: 1, status: "queued" }), () => undefined),
   /session, version, operation, fields, or values are invalid/,
 );
 
@@ -122,16 +149,25 @@ assert.throws(
   /frame length is invalid/,
 );
 
-const encoded = encodeHostControlFrame(sessionId, 1, { op: "inputEpoch", inputEpoch: 3 });
+const encoded = encodeHostControlFrame(sessionId, 1, { op: "inputFence", fenceId: 3, inputBytes: 42 });
 assert.deepEqual(Array.from(encoded.subarray(0, 4)), [0x42, 0x4f, 0x53, 0x31]);
 assert.equal(((encoded[4] << 8) | encoded[5]), encoded.byteLength - 6);
 assert.deepEqual(JSON.parse(new TextDecoder().decode(encoded.subarray(6))), {
   v: 1,
   sessionId,
   seq: 1,
-  op: "inputEpoch",
-  inputEpoch: 3,
+  op: "inputFence",
+  fenceId: 3,
+  inputBytes: 42,
 });
 assert.throws(() => encodeHostControlFrame(sessionId, 0, { op: "hello", cols: 80, rows: 24 }));
+assert.deepEqual(
+  JSON.parse(new TextDecoder().decode(encodeHostControlFrame(sessionId, 2, { op: "ack", ackSeq: 1, status: "queued" }).subarray(6))),
+  { v: 1, sessionId, seq: 2, op: "ack", ackSeq: 1, status: "queued" },
+);
+assert.throws(
+  () => encodeHostControlFrame(sessionId, 2, { op: "inputFence", fenceId: 0, inputBytes: 0 } as never),
+  /Invalid host COM2 control frame/,
+);
 
 console.log("COM2 fail-closed framing and sequence tests passed");

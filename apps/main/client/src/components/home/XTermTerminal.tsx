@@ -68,6 +68,7 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   const [downloadProgress, setDownloadProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [pendingPortfolioAction, setPendingPortfolioAction] = useState<PendingPortfolioAction | null>(null);
   const [runtimeWarning, setRuntimeWarning] = useState<string | null>(null);
+  const [controlFailure, setControlFailure] = useState<string | null>(null);
   const [nativeActionStatus, setNativeActionStatus] = useState<string | null>(null);
 
   const clearPendingPortfolioAction = () => {
@@ -141,10 +142,9 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
 
     let disposed = false;
     const sessionToken = {};
-    pendingPortfolioActionRef.current = null;
-    setPendingPortfolioAction(null);
     setNativeActionStatus(null);
     setRuntimeWarning(null);
+    setControlFailure(null);
     const session = osMode
       ? new V86TerminalSession({
           columns: term.cols,
@@ -172,6 +172,11 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
             return opened;
           },
           onCopyContact: () => copyPrimaryContact(sessionToken),
+          onControlRevoked: (message) => {
+            if (activeSessionTokenRef.current !== sessionToken) return;
+            clearPendingPortfolioAction();
+            setControlFailure(message);
+          },
           onPortfolioActionRequest: (action, linkId, requestId) => {
             if (activeSessionTokenRef.current !== sessionToken || pendingPortfolioActionRef.current) return false;
             if (action === "open") {
@@ -343,8 +348,14 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
             {sessionState.status === 'failed' && (
               <span role="alert">{sessionState.error?.message}</span>
             )}
-            {runtimeWarning && <span role="status">{runtimeWarning}</span>}
-            {nativeActionStatus && <span role="status">{nativeActionStatus}</span>}
+            {controlFailure && (
+              <span role="alert">
+                {lang === "ru"
+                  ? "Канал управления гостем отключён; ожидающие действия отменены. Ввод и Ctrl+C остаются доступны."
+                  : "Guest control channel revoked; pending actions were canceled. Raw input and Ctrl+C remain available."}
+                {" "}{controlFailure}
+              </span>
+            )}
             <button type="button" onClick={resetGuest} disabled={sessionState.status === 'disposed'}>
               {lang === 'ru' ? 'Перезапустить' : 'Reset'}
             </button>

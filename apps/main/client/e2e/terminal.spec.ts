@@ -396,12 +396,12 @@ test("the opt-in worker rejects an unpinned guest manifest before requesting ass
   expect(releaseRequests).toEqual(["/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json"]);
 });
 
-test("the opt-in worker rejects a manifest without its content-derived guest identity", async ({ page }) => {
+test("the opt-in worker rejects a mismatched guest build descriptor before requesting assets", async ({ page }) => {
   const releaseRequests: string[] = [];
   await page.route("**/browser-os/**/manifest.json", async (route) => {
     const response = await route.fetch();
     const manifest = await response.json();
-    delete manifest.assets[manifest.guest.assetPaths.filesystemJson].sha256;
+    manifest.guest.buildId = "f".repeat(64);
     await route.fulfill({ response, json: manifest });
   });
   page.on("request", (request) => {
@@ -429,12 +429,18 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await page.goto("/en");
   const screen = page.locator(".xterm-screen");
   const mobileClear = page.locator(".terminal-mobile-bar").getByRole("button", { name: "clear", exact: true });
+  const mobileClearDom = page.locator(".terminal-mobile-bar button").filter({ hasText: /^clear$/ });
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(mobileClear).toBeDisabled();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(mobileClear).toBeDisabled();
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(mobileClear).toBeDisabled();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   const origin = new URL(page.url()).origin;
   expect(workerUrls.length).toBeGreaterThan(0);
   expect(workerUrls.every((url) => new URL(url).origin === origin)).toBe(true);
@@ -443,10 +449,10 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
 
   const input = page.locator(".xterm-helper-textarea");
   await input.click();
-  await page.keyboard.type("printf 'Привет Linux\\n' | tee /tmp/os-preview.txt | tr '[:lower:]' '[:upper:]' > /tmp/os-preview.upper; pipeStatus=$?; cat /tmp/os-preview.txt /tmp/os-preview.upper; printf 'PIPE_EXIT=%d\\n' \"$pipeStatus\"");
+  await page.keyboard.type("printf 'Привет Linux\\n' | tee /tmp/os-preview.txt | tr 'a-z' 'A-Z' > /tmp/os-preview.upper; pipeStatus=$?; cat /tmp/os-preview.txt /tmp/os-preview.upper; printf 'PIPE_EXIT=%d\\n' \"$pipeStatus\"");
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("Привет Linux", { timeout: 30_000 });
-  await expect(screen).toContainText("ПРИВЕТ LINUX", { timeout: 30_000 });
+  await expect(screen).toContainText("Привет LINUX", { timeout: 30_000 });
   await expect(screen).toContainText("PIPE_EXIT=0", { timeout: 30_000 });
   await input.click();
   await page.keyboard.type("printf 'A\\rB\\nC\\r\\nD\\n'");
@@ -498,9 +504,10 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
   expect(workerUrls.length).toBeGreaterThan(0);
   const screen = page.locator(".xterm-screen");
   await page.locator(".xterm-helper-textarea").click();
-  await page.keyboard.type("printf 'fallback-pid=%s\\n' \"$$\"");
+  await page.keyboard.type("printf 'fallback-pid=%s\\n' \"$$\"; printf 'FALLBACK_RESULT=%s\\n' \"$((6*7))\"");
   await page.keyboard.press("Enter");
-  await expect(screen).toContainText(/fallback-pid=\\d+/, { timeout: 30_000 });
+  await expect(screen).toContainText(/fallback-pid=\d+/, { timeout: 30_000 });
+  await expect(screen).toContainText("FALLBACK_RESULT=42", { timeout: 30_000 });
 });
 
 test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
