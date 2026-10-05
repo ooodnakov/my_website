@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { Com2Decoder, MAX_CONTROL_SEQUENCE, encodeHostControlFrame, type GuestControlFrame } from "../com2Protocol";
+import { Com2Decoder, matchesDispatchAck, MAX_CONTROL_SEQUENCE, encodeHostControlFrame, type GuestControlFrame } from "../com2Protocol";
 
 const sessionId = "0123456789abcdef0123456789abcdef";
 const guestBuildId = "a".repeat(64);
@@ -28,7 +28,7 @@ const decoded: Array<{ frame: GuestControlFrame; seq: number }> = [];
 const stream = join(
   guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }),
   guestFrame(2, { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" }),
-  guestFrame(3, { op: "ack", ackSeq: 7, status: "accepted" }),
+  guestFrame(3, { op: "ack", ackSeq: 7, requestId: 19, status: "accepted" }),
 );
 for (let offset = 0; offset < stream.byteLength; offset += 1) {
   decoder.push(stream.subarray(offset, offset + 1), (frame, seq) => decoded.push({ frame, seq }));
@@ -36,8 +36,15 @@ for (let offset = 0; offset < stream.byteLength; offset += 1) {
 assert.deepEqual(decoded, [
   { seq: 1, frame: { op: "ready", guestBuildId, cols: 80, rows: 24 } },
   { seq: 2, frame: { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" } },
-  { seq: 3, frame: { op: "ack", ackSeq: 7, status: "accepted" } },
+  { seq: 3, frame: { op: "ack", ackSeq: 7, requestId: 19, status: "accepted" } },
 ]);
+
+const decodedAck = decoded[2]?.frame;
+assert.ok(decodedAck?.op === "ack");
+assert.equal(matchesDispatchAck(decodedAck, { ackSeq: 7, requestId: 19 }), true);
+assert.equal(matchesDispatchAck(decodedAck, { ackSeq: 8, requestId: 19 }), false, "a stale host sequence cannot match");
+assert.equal(matchesDispatchAck(decodedAck, { ackSeq: 7, requestId: 20 }), false, "a different request ID cannot match");
+assert.equal(matchesDispatchAck(decodedAck, null), false, "an ACK cannot match without an outstanding dispatch");
 
 const postCleanDecoder = new Com2Decoder(sessionId);
 const postCleanFrames: Array<{ frame: GuestControlFrame; seq: number }> = [];
@@ -113,11 +120,20 @@ assert.throws(
   () => badActionDecoder.push(guestFrame(1, { op: "portfolioAction", requestId: 1, action: "copyContact", linkId: "social-gh" }), () => undefined),
   /session, version, operation, fields, or values are invalid/,
 );
-const badAckDecoder = new Com2Decoder(sessionId);
+const missingAckRequestIdDecoder = new Com2Decoder(sessionId);
 assert.throws(
-  () => badAckDecoder.push(guestFrame(1, { op: "ack", ackSeq: 1, status: "queued" }), () => undefined),
+  () => missingAckRequestIdDecoder.push(guestFrame(1, { op: "ack", ackSeq: 1, status: "accepted" }), () => undefined),
   /session, version, operation, fields, or values are invalid/,
+  "the contract requires requestId even when status is accepted",
 );
+for (const requestId of [0, MAX_CONTROL_SEQUENCE + 1, "19"]) {
+  const invalidAckRequestIdDecoder = new Com2Decoder(sessionId);
+  assert.throws(
+    () => invalidAckRequestIdDecoder.push(guestFrame(1, { op: "ack", ackSeq: 1, requestId, status: "accepted" }), () => undefined),
+    /session, version, operation, fields, or values are invalid/,
+    `invalid dispatch ACK requestId ${String(requestId)} is rejected`,
+  );
+}
 
 const duplicatePayload = new TextEncoder().encode(
   `{"v":1,"sessionId":"${sessionId}","seq":1,"op":"error","op":"error","code":"guest"}`,

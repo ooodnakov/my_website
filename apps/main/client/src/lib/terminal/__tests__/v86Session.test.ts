@@ -116,6 +116,23 @@ assert.equal(session.runVisitorCommand("copy-contact"), false, "retained copy ca
 assert.equal(openCvCalls, 1);
 assert.equal(copyContactCalls, 1);
 
+const reorderedSession = createSession();
+await reorderedSession.start();
+const reorderedWorker = FakeWorker.instances.at(-1)!;
+reorderedWorker.emit({ type: "shell-ready" });
+assert.equal(reorderedSession.getState().status, "busy", "shell readiness alone cannot claim input is active");
+reorderedWorker.emit({ type: "control-ready" });
+assert.equal(reorderedSession.getState().status, "ready", "the session becomes ready only after both startup gates");
+reorderedSession.input.sendBytes(new Uint8Array([0x41]));
+reorderedSession.input.sendBytes(new Uint8Array([0x03]));
+assert.deepEqual(
+  reorderedWorker.messages.filter((message) => message.type === "input").map((message) => message.type === "input" ? message.bytes[0] : -1),
+  [0x41, 0x03],
+  "native typing and Ctrl+C remain available after the two readiness signals arrive out of order",
+);
+reorderedSession.dispose();
+await reorderedSession.whenDisposed();
+
 let pendingConfirmation = false;
 let revokedMessage = "";
 let allowCalls = 0;
@@ -152,7 +169,7 @@ void waitingSession.whenDisposed().then(() => { waitingReleased = true; });
 const nextSession = createSession();
 const nextStart = nextSession.start();
 await Promise.resolve();
-assert.equal(FakeWorker.instances.length, 3, "the next v86 Worker waits for the active Worker to acknowledge teardown");
+assert.equal(FakeWorker.instances.length, 4, "the next v86 Worker waits for the active Worker to acknowledge teardown");
 for (let index = 0; index < 1000; index += 1) {
   waitingWorker.emit({ type: "progress", loaded: index, total: 1000 });
 }
@@ -161,7 +178,7 @@ assert.equal(waitingReleased, false, "non-ACK messages do not resolve disposal")
 waitingWorker.emit({ type: "disposed" });
 await Promise.all([waitingSession.whenDisposed(), nextStart]);
 assert.equal(waitingWorker.terminated, true);
-assert.equal(FakeWorker.instances.length, 4);
+assert.equal(FakeWorker.instances.length, 5);
 assert.equal(FakeWorker.active, 1);
 assert.equal(FakeWorker.maximumActive, 1, "only one v86 Worker may own emulator resources at a time");
 const nextWorker = FakeWorker.instances.at(-1)!;

@@ -499,7 +499,9 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
   await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
-  await expect(page.getByText("Verified fallback WASM selected after primary initialization failed.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({
+    hasText: "Verified fallback WASM selected after primary initialization failed.",
+  })).toBeVisible();
   expect(fallbackRequested).toBe(true);
   expect(workerUrls.length).toBeGreaterThan(0);
   const screen = page.locator(".xterm-screen");
@@ -508,6 +510,61 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
   await page.keyboard.press("Enter");
   await expect(screen).toContainText(/fallback-pid=\d+/, { timeout: 30_000 });
   await expect(screen).toContainText("FALLBACK_RESULT=42", { timeout: 30_000 });
+});
+
+test("opt-in guest native actions expose truthful open and clipboard feedback", async ({ page }) => {
+  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
+  test.setTimeout(240_000);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new DOMException("denied", "NotAllowedError")) },
+    });
+    window.open = (() => { throw new DOMException("blocked", "NotAllowedError"); }) as typeof window.open;
+  });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+
+  const input = page.locator(".xterm-helper-textarea");
+  await input.click();
+  await page.keyboard.type("open cv.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests opening: quick-cv", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "The link was rejected." })).toBeVisible();
+
+  await page.evaluate(() => {
+    window.open = (() => null) as typeof window.open;
+  });
+  await input.click();
+  await page.keyboard.type("open cv.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests opening: quick-cv", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({
+    hasText: "Open request sent; browser popup settings may block it.",
+  })).toBeVisible();
+
+  await input.click();
+  await page.keyboard.type("copy-contact");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests copying the contact", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Clipboard copy failed." })).toBeVisible();
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.resolve() },
+    });
+  });
+  await input.click();
+  await page.keyboard.type("copy-contact");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests copying the contact", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Contact copied." })).toBeVisible();
 });
 
 test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {

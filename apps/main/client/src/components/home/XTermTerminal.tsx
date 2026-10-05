@@ -80,8 +80,12 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
   };
   const openSafeLink = (uri: string): boolean => {
     if (!isSafeTerminalLink(uri, window.location.href)) return false;
-    window.open(uri, "_blank", "noopener,noreferrer");
-    return true;
+    try {
+      window.open(uri, "_blank", "noopener,noreferrer");
+      return true;
+    } catch {
+      return false;
+    }
   };
   const copyPrimaryContact = (sessionToken: object): boolean => {
     if (activeSessionTokenRef.current !== sessionToken) return false;
@@ -355,6 +359,16 @@ export const XTermTerminal = forwardRef<XTermTerminalHandle, XTermTerminalProps>
                   : "Guest control channel revoked; pending actions were canceled. Raw input and Ctrl+C remain available."}
                 {" "}{controlFailure}
               </span>
+            )}
+            {runtimeWarning && (
+              <span role="status" aria-live="polite">
+                {lang === "ru"
+                  ? "Проверенная резервная WASM выбрана после сбоя основного модуля."
+                  : runtimeWarning}
+              </span>
+            )}
+            {nativeActionStatus && (
+              <span role="status" aria-live="polite">{nativeActionStatus}</span>
             )}
             <button type="button" onClick={resetGuest} disabled={sessionState.status === 'disposed'}>
               {lang === 'ru' ? 'Перезапустить' : 'Reset'}

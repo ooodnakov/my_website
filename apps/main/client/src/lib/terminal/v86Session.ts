@@ -81,6 +81,8 @@ export class V86TerminalSession implements TerminalSession {
   private workerFinished = false;
   private inputReady = false;
   private controlAvailable = false;
+  private workerControlReady = false;
+  private workerShellReady = false;
   private lastPortfolioRequestId = 0;
   private columns: number;
   private rows: number;
@@ -109,15 +111,18 @@ export class V86TerminalSession implements TerminalSession {
       else if (data.type === "progress") this.options.onProgress?.(data.loaded, data.total);
       else if (data.type === "output") this.emit(data.bytes);
       else if (data.type === "control-ready") {
+        this.workerControlReady = true;
         this.inputReady = true;
         this.controlAvailable = true;
         this.worker?.postMessage({ type: "resize", cols: this.columns, rows: this.rows });
         this.worker?.postMessage({ type: "set-language", locale: this.language });
+        this.finishStartupWhenReady();
       }
       else if (data.type === "shell-ready") {
-        this.clearBootTimer();
-        this.setState({ status: "ready" });
-      } else if (data.type === "shell-state" || data.type === "input-fence-ack") {
+        this.workerShellReady = true;
+        this.finishStartupWhenReady();
+      }
+      else if (data.type === "shell-state" || data.type === "input-fence-ack") {
         // Shell state is advisory; neither message authorizes host-side command dispatch.
         this.options.onShellStateChange?.(data.state);
       } else if (data.type === "portfolio-action") {
@@ -291,6 +296,17 @@ export class V86TerminalSession implements TerminalSession {
     }
     this.resolveDisposal();
     this.options.onDisposed?.();
+  }
+
+  private finishStartupWhenReady(): void {
+    if (this.disposed
+      || this.state.status !== "busy"
+      || !this.workerControlReady
+      || !this.workerShellReady
+      || !this.controlAvailable
+      || !this.inputReady) return;
+    this.clearBootTimer();
+    this.setState({ status: "ready" });
   }
 
   private clearBootTimer(): void {

@@ -46,8 +46,15 @@ export type GuestControlFrame =
   | { op: "resizeAck"; cols: number; rows: number }
   | { op: "localeAck"; locale: "en" | "ru" }
   | { op: "portfolioAction"; requestId: number; action: "open" | "copyContact"; linkId: PortfolioLinkId }
-  | { op: "ack"; ackSeq: number; status: "accepted" | "rejected" }
+  | { op: "ack"; ackSeq: number; requestId: number; status: "accepted" | "rejected" }
   | { op: "error"; code: "badFrame" | "badSession" | "badSequence" | "badOperation" | "badValue" | "internal" };
+
+export function matchesDispatchAck(
+  frame: Extract<GuestControlFrame, { op: "ack" }>,
+  pending: { ackSeq: number; requestId: number } | null,
+): boolean {
+  return pending !== null && frame.ackSeq === pending.ackSeq && frame.requestId === pending.requestId;
+}
 
 export type HostControlFrame =
   | { op: "hello"; cols: number; rows: number }
@@ -214,10 +221,11 @@ function parseGuestFrame(value: unknown, sessionId: string): { seq: number; fram
         || (frame.action === "copyContact" && frame.linkId !== "quick-mail")) return null;
       return { seq: frame.seq, frame: { op: "portfolioAction", requestId: frame.requestId, action: frame.action, linkId: frame.linkId as PortfolioLinkId } };
     case "ack":
-      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "ackSeq", "status"])
+      if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "ackSeq", "requestId", "status"])
         || !isIntegerInRange(frame.ackSeq, 1, MAX_SEQUENCE)
+        || !isIntegerInRange(frame.requestId, 1, MAX_SEQUENCE)
         || (frame.status !== "accepted" && frame.status !== "rejected")) return null;
-      return { seq: frame.seq, frame: { op: "ack", ackSeq: frame.ackSeq, status: frame.status } };
+      return { seq: frame.seq, frame: { op: "ack", ackSeq: frame.ackSeq, requestId: frame.requestId, status: frame.status } };
     case "error":
       if (!hasExactFields(frame, ["v", "sessionId", "seq", "op", "code"])
         || !["badFrame", "badSession", "badSequence", "badOperation", "badValue", "internal"].includes(String(frame.code))) return null;

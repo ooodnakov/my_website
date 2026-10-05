@@ -153,8 +153,23 @@ function createHarness(options: {
   omit?: string[];
   pauseAsset?: string;
   corruptResponses?: Record<string, Uint8Array>;
+  manualTimers?: boolean;
   manifestBuildId?: string;
 } = {}) {
+  const workerTimers = new Map<number, { delay: number; callback: () => void }>();
+  let timerSequence = 0;
+  const workerSetTimeout = (callback: () => void, delay = 0) => {
+    const id = ++timerSequence;
+    workerTimers.set(id, { delay, callback });
+    return id;
+  };
+  const workerClearTimeout = (id: number) => { workerTimers.delete(id); };
+  const fireTimer = (delay: number) => {
+    const timer = [...workerTimers].find(([, entry]) => entry.delay === delay);
+    assert.ok(timer, `Worker timer ${delay}ms was not scheduled`);
+    workerTimers.delete(timer[0]);
+    timer[1].callback();
+  };
   FakeV86.instances = [];
   const stateWaiters = new Set<() => void>();
   const notifyStateChange = () => stateWaiters.forEach((notify) => notify());
@@ -256,8 +271,8 @@ function createHarness(options: {
     Math,
     Promise,
     WebAssembly,
-    setTimeout,
-    clearTimeout,
+    setTimeout: options.manualTimers ? workerSetTimeout : setTimeout,
+    clearTimeout: options.manualTimers ? workerClearTimeout : clearTimeout,
     queueMicrotask,
     console,
   });
@@ -303,6 +318,7 @@ function createHarness(options: {
     files, manifest, manifestAssets, fetchLog, messages, post, start, requestStart, waitFor, injectGuestBytes, injectGuestFrame, dispose,
     pauseStarted, releasePause,
     newXMLHttpRequest: () => vm.runInContext("new XMLHttpRequest()", context),
+    fireTimer,
   };
 }
 
@@ -378,6 +394,31 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
 }
 
 {
+  const harness = createHarness();
+  await harness.start();
+  const emulator = FakeV86.instances[0]!;
+  emulator.trigger("emulator-ready", undefined as never);
+  const hello = framePayload(emulator.sentControlFrames[0]!);
+  harness.injectGuestFrame(String(hello.sessionId), 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: 80,
+    rows: 24,
+  });
+  harness.injectGuestFrame(String(hello.sessionId), 2, {
+    op: "ack",
+    ackSeq: 3,
+    requestId: 19,
+    status: "accepted",
+  });
+  assert.equal(harness.messages.some((entry) => entry.type === "control-error"), true,
+    "a well-formed guest ACK cannot authorize an action that the host never dispatched");
+  assert.equal(emulator.sentControlFrames.some((frame) => framePayload(frame).op === "dispatchAction"), false,
+    "quick-action dispatch remains disabled without guest consumption and execution proof");
+  harness.dispose();
+}
+
+{
   const harness = createHarness({ pauseAsset: "alpine/vmlinuz" });
   harness.requestStart();
   await harness.pauseStarted;
@@ -397,6 +438,67 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     rows: 30,
   });
   assert.equal(harness.messages.filter((entry) => entry.type === "control-ready").length, 1);
+  harness.dispose();
+}
+
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const emulator = FakeV86.instances[0]!;
+  emulator.trigger("emulator-ready", undefined as never);
+  const hello = framePayload(emulator.sentControlFrames[0]!);
+  assert.deepEqual({ cols: hello.cols, rows: hello.rows }, { cols: 80, rows: 24 });
+  harness.post({ type: "resize", cols: 100, rows: 30 });
+  harness.injectGuestFrame(String(hello.sessionId), 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: 80,
+    rows: 24,
+  });
+  harness.injectGuestFrame(String(hello.sessionId), 2, {
+    op: "shellReady",
+    guestBuildId: harness.manifest.guest.buildId,
+  });
+  assert.equal(harness.messages.some((entry) => entry.type === "shell-ready"), false,
+    "shell startup cannot be delivered while the requested initial resize is pending");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 100, rows: 30 });
+  assert.deepEqual(
+    harness.messages.filter((entry) => entry.type === "control-ready" || entry.type === "shell-ready").map((entry) => entry.type),
+    ["control-ready", "shell-ready"],
+    "late initial sizing readiness is delivered before shell readiness",
+  );
+  harness.post({ type: "input", bytes: new Uint8Array([0x41, 0x03]) });
+  assert.deepEqual(Array.from(emulator.sentSerialInput.at(-1)!), [0x41, 0x03],
+    "native typing and Ctrl+C remain raw COM1 input after readiness");
+  harness.dispose();
+}
+
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const emulator = FakeV86.instances[0]!;
+  emulator.trigger("emulator-ready", undefined as never);
+  const hello = framePayload(emulator.sentControlFrames[0]!);
+  harness.post({ type: "resize", cols: 100, rows: 30 });
+  harness.injectGuestFrame(String(hello.sessionId), 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: 80,
+    rows: 24,
+  });
+  harness.injectGuestFrame(String(hello.sessionId), 2, {
+    op: "shellReady",
+    guestBuildId: harness.manifest.guest.buildId,
+  });
+  harness.fireTimer(10_000);
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "a missing initial resize ACK remains bounded by the Worker timeout");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready" || entry.type === "shell-ready"), false,
+    "startup never claims readiness when the resize ACK is missing");
+  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 100, rows: 30 });
+  assert.equal(harness.messages.some((entry) => entry.type === "shell-ready"), false,
+    "a late ACK cannot reopen a failed startup");
   harness.dispose();
 }
 

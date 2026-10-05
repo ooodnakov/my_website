@@ -1,6 +1,6 @@
 import { V86 } from "v86";
 import type { V86Options } from "v86";
-import { Com2Decoder, MAX_CONTROL_SEQUENCE, encodeHostControlFrame, type GuestControlFrame, type HostControlFrame } from "./com2Protocol";
+import { Com2Decoder, MAX_CONTROL_SEQUENCE, encodeHostControlFrame, matchesDispatchAck, type GuestControlFrame, type HostControlFrame } from "./com2Protocol";
 import type { V86WorkerRequest as WorkerRequest, V86WorkerResponse as WorkerResponse } from "./v86Session";
 
 interface ManifestAsset {
@@ -54,6 +54,7 @@ let controlByte = new Uint8Array(1);
 let controlDecoder: Com2Decoder | null = null;
 let sessionId: string | null = null;
 let hostSequence = 0;
+let pendingDispatchAck: { ackSeq: number; requestId: number } | null = null;
 let guestBuildId = "";
 let latestInputBytes = 0;
 let latestFenceId = 0;
@@ -63,6 +64,7 @@ let currentRows = 24;
 let currentLocale: "en" | "ru" = "en";
 let guestReady = false;
 let shellReady = false;
+let shellReadySent = false;
 let disposed = false;
 let failed = false;
 let controlFailed = false;
@@ -77,6 +79,7 @@ function send(message: WorkerResponse, transfer?: Transferable[]) {
 function fail(message: string) {
   if (disposed || failed) return;
   failed = true;
+  pendingDispatchAck = null;
   if (resizeTimer !== null) clearTimeout(resizeTimer);
   resizeTimer = null;
   send({ type: "error", message });
@@ -90,6 +93,7 @@ function failControl(message: string) {
   }
   controlFailed = true;
   currentFence = null;
+  pendingDispatchAck = null;
   send({ type: "control-error", message });
 }
 
@@ -304,8 +308,10 @@ function sendControl(frame: HostControlFrame): boolean {
     return false;
   }
   try {
-    const bytes = encodeHostControlFrame(sessionId, ++hostSequence, frame);
+    const sequence = ++hostSequence;
+    const bytes = encodeHostControlFrame(sessionId, sequence, frame);
     emulator.serial_send_bytes(1, bytes);
+    if (frame.op === "dispatchAction") pendingDispatchAck = { ackSeq: sequence, requestId: frame.requestId };
     return true;
   } catch {
     failControl("Unable to send a guest control frame");
@@ -321,7 +327,14 @@ function signalControlReadyWhenSized(): void {
   if (!guestReady || controlReadySent || resizeInFlight || !matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) return;
   controlReadySent = true;
   send({ type: "control-ready" });
+  signalShellReadyWhenSized();
 }
+function signalShellReadyWhenSized(): void {
+  if (!shellReady || shellReadySent || !controlReadySent || controlFailed || failed || disposed) return;
+  shellReadySent = true;
+  send({ type: "shell-ready" });
+}
+
 
 function sendDesiredResize(): void {
   if (!guestReady || controlFailed || resizeInFlight || matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) {
@@ -366,7 +379,7 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number) {
       return;
     }
     shellReady = true;
-    send({ type: "shell-ready" });
+    signalShellReadyWhenSized();
   } else if (frame.op === "shellState") {
     send({ type: "shell-state", state: frame.state });
   } else if (frame.op === "inputFenceAck") {
@@ -386,7 +399,11 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number) {
       linkId: frame.linkId,
     });
   } else if (frame.op === "ack") {
-    failControl("Guest acknowledged a host action that was never dispatched");
+    if (!matchesDispatchAck(frame, pendingDispatchAck)) {
+      failControl("Guest action acknowledgement does not match an outstanding dispatch");
+      return;
+    }
+    pendingDispatchAck = null;
   } else if (frame.op === "error") {
     failControl(`Guest control protocol error: ${frame.code}`);
   }
@@ -605,6 +622,7 @@ function handleRequest(data: unknown) {
 async function dispose(): Promise<void> {
   if (disposalPromise) return disposalPromise;
   disposed = true;
+  pendingDispatchAck = null;
   if (resizeTimer !== null) clearTimeout(resizeTimer);
   resizeTimer = null;
   disposalPromise = (async () => {
