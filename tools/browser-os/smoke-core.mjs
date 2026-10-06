@@ -80,6 +80,7 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
   const controlFrames = [];
   const controlHistory = [];
   let controlError = null;
+  let ctrlCToPromptMs = null;
   let controlSequence = 1;
   let controlSessionId = randomHex(16);
   let inputBytes = 0;
@@ -389,18 +390,19 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
       /__PARTIAL_UTF8__:Живой Linux/,
     );
     const tools = await command("TOOLS", `zsh --version; printf '[{"name":"Guest shell"},{"name":"Живой Linux"}]\\n' | jq -r '.[] | .name'; eza --color=never -1 /tmp/browser-os-smoke; git -C /tmp init -q browser-os-git-smoke && git -C /tmp/browser-os-git-smoke config user.name smoke && git -C /tmp/browser-os-git-smoke config user.email smoke@example.invalid && touch /tmp/browser-os-git-smoke/tracked && git -C /tmp/browser-os-git-smoke add tracked && git -C /tmp/browser-os-git-smoke commit -qm smoke && test -z "$(git -C /tmp/browser-os-git-smoke status --porcelain)" && printf "__GIT_COMMIT_OK__\\n"; printf "needle\\nother\\n" | fzf --filter=needle; XDG_DATA_HOME=/tmp/browser-os-zoxide zoxide add /tmp/browser-os-git-smoke && XDG_DATA_HOME=/tmp/browser-os-zoxide zoxide query --list`, /zsh 5\.9[\s\S]*Guest shell[\s\S]*Живой Linux[\s\S]*browser-os-smoke[\s\S]*__GIT_COMMIT_OK__[\s\S]*needle[\s\S]*browser-os-git-smoke/);
-    const interruptStarted = Date.now();
     await sendPaced("sleep 15\n");
     await new Promise(resolve => setTimeout(resolve, 300));
     const interruptRecoveryStart = output().length;
+    const interruptStarted = Date.now();
     sendBytes(Uint8Array.of(3));
     await waitForText("localhost:~%", interruptRecoveryStart, 10000);
+    ctrlCToPromptMs = Date.now() - interruptStarted;
+    if (ctrlCToPromptMs > 3000) throw new Error("Ctrl+C did not return promptly to the guest shell");
     await new Promise(resolve => setTimeout(resolve, 100));
     const interruptShellPromptStart = output().length;
     const interrupt = await command("INTERRUPT", 'printf "__INTERRUPT_RECOVERED__\\n"', /__INTERRUPT_RECOVERED__/, 3000);
     await waitForText("localhost:~%", interruptShellPromptStart, 10000);
     await new Promise(resolve => setTimeout(resolve, 100));
-    if (Date.now() - interruptStarted > 3000) throw new Error("Ctrl+C did not return promptly to the guest shell");
     const escapeStart = output().length;
     for (const byte of [0x1b, 0x5b, 0x41]) {
       sendBytes(Uint8Array.of(byte));
@@ -425,6 +427,7 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
     return {
       ready: true,
       bootMs,
+      ctrlCToPromptMs,
       assertions,
       configuredMemoryBytes: 128 * 1024 * 1024,
       outputBytes: serial.length,

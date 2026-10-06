@@ -126,6 +126,7 @@ EOF
 HOME=/home/visitor $PROOT /bin/zsh -fc 'autoload -Uz compinit; compinit -u -d /home/visitor/.zcompdump'
 chown 1000:1000 "$ROOTFS/home/visitor/.zcompdump"
 chmod 0444 "$ROOTFS/home/visitor/.zcompdump"
+python3 /usr/local/bin/normalize-shadow.py "$ROOTFS" "$SOURCE_DATE_EPOCH"
 python3 /usr/local/bin/guest-build-identity.py /input/guest-build-inputs.json "$OUT/alpine/guest-build.json"
 install -D -m 0444 "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json"
 cmp -s "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json" || fail 'embedded guest build identity differs from published descriptor'

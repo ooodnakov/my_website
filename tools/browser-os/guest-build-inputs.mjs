@@ -18,6 +18,7 @@ const fixed = [
   "tools/browser-os/manifest.py",
   "tools/browser-os/source_provenance.py",
   "tools/browser-os/normalize-initramfs.py",
+  "tools/browser-os/normalize-shadow.py",
   "tools/browser-os/packages.lock",
   "tools/browser-os/python-zstd-fallback.patch",
   "tools/browser-os/export-portfolio.mjs",
