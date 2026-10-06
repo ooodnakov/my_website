@@ -34,11 +34,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 node --experimental-strip-types "$ROOT/tools/browser-os/export-portfolio.mjs" "$INPUT/portfolio"
+node --experimental-strip-types "$ROOT/tools/browser-os/guest-build-inputs.mjs" "$ROOT" "$INPUT"
 docker build --platform linux/arm64 \
   --file "$ROOT/tools/browser-os/Dockerfile" \
   --tag "$IMAGE" \
   "$ROOT/tools/browser-os"
 docker create --platform linux/arm64 --tmpfs /tmp/browser-os-initramfs:rw,exec,nosuid,size=256m --name "$CONTAINER" "$IMAGE" >/dev/null
 docker cp "$INPUT/portfolio" "$CONTAINER:/input/"
+docker cp "$INPUT/guest-build-inputs.json" "$CONTAINER:/input/"
 docker start --attach "$CONTAINER"
 docker cp "$CONTAINER:/out/." "$OUTPUT/"

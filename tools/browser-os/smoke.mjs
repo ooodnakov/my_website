@@ -13,6 +13,11 @@ const args = process.argv.slice(2);
 const assetArgument = args.find(argument => !argument.startsWith("--"));
 const assetRoot = path.resolve(assetArgument ?? defaultAssets);
 const manifest = JSON.parse(await fs.readFile(path.join(assetRoot, "manifest.json"), "utf8"));
+if (manifest.guest?.buildIdentityPath !== "alpine/guest-build.json" ||
+    !/^[a-f0-9]{64}$/.test(manifest.guest?.buildId ?? "") ||
+    manifest.assets?.[manifest.guest.buildIdentityPath]?.sha256 !== manifest.guest.buildId) {
+  throw new Error("manifest guest build identity does not match its descriptor asset");
+}
 
 async function verifyAssets() {
   let runtimeBytes = 0;
@@ -76,7 +81,7 @@ async function runNode() {
   const bootStartedAt = Date.now();
   const emulator = new V86(baseOptions(nodeAssets));
   try {
-    const result = await runGuestSmoke(emulator, bootStartedAt);
+    const result = await runGuestSmoke(emulator, bootStartedAt, undefined, undefined, manifest.guest.buildId);
     return { ...result, localAssetBytes: manifestRuntimeBytes };
   } finally {
     await emulator.destroy().catch(() => {});
@@ -203,7 +208,7 @@ async function runBrowser() {
         log_level: 0,
       });
       try {
-        return await runGuestSmoke(emulator, startedAt, undefined, () => window.__recordShellReady());
+        return await runGuestSmoke(emulator, startedAt, undefined, () => window.__recordShellReady(), config.guest.buildId);
       } finally {
         await emulator.destroy().catch(() => {});
       }

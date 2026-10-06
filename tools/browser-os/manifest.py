@@ -46,6 +46,7 @@ def main() -> None:
         "alpine/vmlinuz",
         "alpine/initramfs",
         "alpine/9p/fs.json",
+        "alpine/guest-build.json",
         "v86/seabios.bin",
         "v86/vgabios.bin",
         "v86/libv86.mjs",
@@ -118,6 +119,8 @@ def main() -> None:
             "login": "visitor (uid 1000; root account locked)",
             "serialConsole": "ttyS0 at 115200 8N1",
             "memoryBytes": 128 * 1024 * 1024,
+            "buildIdentityPath": "alpine/guest-build.json",
+            "buildId": assets["alpine/guest-build.json"]["sha256"],
             "networkBackend": None,
             "assetPaths": {
                 "kernel": "alpine/vmlinuz",

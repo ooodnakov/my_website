@@ -15,6 +15,8 @@ case "$1" in
     if [ -d "$2/en" ]; then
       [ "$(stat -c %a "$2/en")" = 555 ]
       printf '%s\\n' "$2" > "$DOCKER_PORTFOLIO"
+    elif [ -f "$2" ]; then
+      [ -s "$2" ]
     else
       printf 'guest asset\\n' > "$3/guest-asset"
     fi

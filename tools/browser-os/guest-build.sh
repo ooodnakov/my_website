@@ -14,6 +14,7 @@ V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5
 APORTS_MAIN_COMMIT=d5a34efc88bbe8d18737fda28125071c4aef8517
 APORTS_COMMUNITY_COMMIT=7805e4fb29efc937492a3173e55dc72ecd9fcdaf
 APORTS_OPENSSL_COMMIT=013edf8b29199933e8ea34dde460b5584b979042
+APORTS_KERNEL_COMMIT=52fae6d7d56f3958f32e5bf9121a7536524b9ef4
 SOURCE_DATE_EPOCH=1767225600
 export SOURCE_DATE_EPOCH
 
@@ -52,12 +53,16 @@ git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
 git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
+git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_KERNEL_COMMIT"
 git -C "$APORTS_SOURCE" checkout --detach "$APORTS_COMMUNITY_COMMIT"
 [ -d /input/portfolio/en ] && [ -d /input/portfolio/ru ] || fail 'canonical portfolio exports are missing'
 mkdir -p "$ROOTFS/portfolio"
 cp -R /input/portfolio/. "$ROOTFS/portfolio/"
 mkdir -p "$ROOTFS/usr/local/bin"
-cp /usr/local/share/browser-os/guest/about /usr/local/share/browser-os/guest/contact /usr/local/share/browser-os/guest/cv /usr/local/share/browser-os/guest/links /usr/local/share/browser-os/guest/projects /usr/local/share/browser-os/guest/tour "$ROOTFS/usr/local/bin/"
+cp /usr/local/share/browser-os/guest/about /usr/local/share/browser-os/guest/contact /usr/local/share/browser-os/guest/cv /usr/local/share/browser-os/guest/links /usr/local/share/browser-os/guest/projects /usr/local/share/browser-os/guest/tour /usr/local/share/browser-os/guest/open /usr/local/share/browser-os/guest/copy-contact /usr/local/share/browser-os/guest/set-locale "$ROOTFS/usr/local/bin/"
+install -D -m 0555 /usr/local/share/browser-os/guest/guestctl "$ROOTFS/usr/local/bin/guestctl"
+install -D -m 0555 /usr/local/share/browser-os/guest/browser-osd "$ROOTFS/usr/local/sbin/browser-osd"
+install -D -m 0444 /usr/local/share/browser-os/guest/zle-hooks.zsh "$ROOTFS/etc/browser-os/zle-hooks.zsh"
 
 $PROOT /bin/sh -ec '
   passwd -l root
@@ -87,13 +92,13 @@ $PROOT /bin/sh -ec '
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
-ttyS0::respawn:/sbin/agetty --autologin visitor -L ttyS0 115200 vt100
+::respawn:/usr/local/sbin/browser-osd
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/openrc shutdown
 EOF
   cat > /etc/motd <<"EOF"
 Alpine Linux x86 guest; offline, ephemeral browser-local session.
-Visitor tools: zsh, jq, git, eza, fzf, zoxide.
+Visitor tools: zsh, jq, git, eza, fzf, zoxide, guestctl.
 EOF
   cat > /home/visitor/.zshrc <<"EOF"
 export LANG=C.UTF-8
@@ -105,8 +110,15 @@ setopt append_history share_history hist_ignore_all_dups
 alias a="eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto"
 autoload -Uz compinit
 compinit -C -u -d "$HOME/.zcompdump"
+source /etc/browser-os/zle-hooks.zsh
 if command -v zoxide >/dev/null 2>&1; then eval "$(zoxide init zsh)"; fi
-print -r -- "__GUEST_READY__"
+autoload -Uz add-zsh-hook
+_browser_os_shell_ready() {
+  add-zsh-hook -d precmd _browser_os_shell_ready
+  print -r -- "shellReady" >> /run/browser-os/shell-out 2>/dev/null
+  print -r -- "__GUEST_READY__"
+}
+add-zsh-hook precmd _browser_os_shell_ready
 EOF
   chown 1000:1000 /home/visitor/.zshrc
   chmod 0600 /home/visitor/.zshrc
@@ -114,6 +126,9 @@ EOF
 HOME=/home/visitor $PROOT /bin/zsh -fc 'autoload -Uz compinit; compinit -u -d /home/visitor/.zcompdump'
 chown 1000:1000 "$ROOTFS/home/visitor/.zcompdump"
 chmod 0444 "$ROOTFS/home/visitor/.zcompdump"
+python3 /usr/local/bin/guest-build-identity.py /input/guest-build-inputs.json "$OUT/alpine/guest-build.json"
+install -D -m 0444 "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json"
+cmp -s "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json" || fail 'embedded guest build identity differs from published descriptor'
 
 python3 -c 'import os,pathlib,sys; epoch=int(sys.argv[2]); [os.utime(path,(epoch,epoch),follow_symlinks=False) for path in [pathlib.Path(sys.argv[1]),*pathlib.Path(sys.argv[1]).rglob("*")]]' "$ROOTFS" "$SOURCE_DATE_EPOCH"
 $PROOT /sbin/mkinitfs -F "base virtio 9p" -t /tmp/mkinitfs-stage "$($PROOT /bin/cat /usr/share/kernel/virt/kernel.release)"

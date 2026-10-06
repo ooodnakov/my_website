@@ -66,6 +66,9 @@ test("portfolio exporter derives both read-only locales from canonical home data
       assert.equal((await stat(localeRoot)).mode & 0o777, 0o555);
     }
     assert.deepEqual(expectedActionIds, [...PORTFOLIO_LINK_IDS].sort());
+    assert.deepEqual(JSON.parse(await readText(output, "portfolio-link-ids.json")), PORTFOLIO_LINK_IDS);
+    assert.equal((await stat(path.join(output, "portfolio-link-ids.json"))).mode & 0o777, 0o444);
+    assert.equal((await stat(output)).mode & 0o777, 0o555);
     assert.throws(() => {
       try {
         execFileSync(process.execPath, ["--experimental-strip-types", exporter, output], { stdio: "pipe" });

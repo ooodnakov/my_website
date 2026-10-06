@@ -1,6 +1,6 @@
 import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assertPortfolioLinkIds } from "./portfolio-ids.mjs";
+import { assertPortfolioLinkIds, PORTFOLIO_LINK_IDS } from "./portfolio-ids.mjs";
 import { homeContent } from "../../apps/main/client/src/data/home/index.ts";
 
 if (!process.argv[2]) throw new Error("Usage: node --experimental-strip-types export-portfolio.mjs OUTPUT_DIRECTORY");
@@ -185,4 +185,8 @@ for (const language of languages) {
   await emit(path.join(output, language), files);
 }
 if (!expectedActions) throw new Error("Canonical portfolio must include both locales");
+const idsFile = path.join(output, "portfolio-link-ids.json");
+await writeFile(idsFile, `${JSON.stringify(PORTFOLIO_LINK_IDS)}\n`, { encoding: "utf8", mode: 0o444 });
+await chmod(idsFile, 0o444);
+await chmod(output, 0o555);
 console.log(JSON.stringify({ locales: languages, actionIds: expectedActions, output }));
