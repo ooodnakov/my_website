@@ -50,6 +50,8 @@ class FakeV86 {
   readonly options: Record<string, unknown>;
   readonly sentControlFrames: Uint8Array[] = [];
   readonly sentSerialInput: Uint8Array[] = [];
+  runCalls = 0;
+  serial1ListenerInstalledAtRun = false;
   private listeners = new Map<string, (value: never) => void>();
 
   constructor(options: Record<string, unknown>) {
@@ -69,6 +71,11 @@ class FakeV86 {
 
   trigger(name: string, value: never): void {
     this.listeners.get(name)?.(value);
+  }
+
+  async run(): Promise<void> {
+    this.runCalls += 1;
+    this.serial1ListenerInstalledAtRun = this.listeners.has("serial1-output-byte");
   }
 
   async destroy(): Promise<void> {}
@@ -138,6 +145,14 @@ function makeAssets(overrides: Record<string, Uint8Array> = {}): Record<string, 
 
 function guestFrame(sessionId: string, seq: number, fields: Record<string, unknown>): Uint8Array {
   const payload = new TextEncoder().encode(JSON.stringify({ v: 1, sessionId, seq, ...fields }));
+  const result = new Uint8Array(payload.byteLength + 6);
+  result.set([0x42, 0x4f, 0x53, 0x31, payload.byteLength >>> 8, payload.byteLength & 0xff]);
+  result.set(payload, 6);
+  return result;
+}
+
+function guestBootstrap(fields: Record<string, unknown>): Uint8Array {
+  const payload = new TextEncoder().encode(JSON.stringify({ v: 1, op: "bootstrap", guestBuildId: "a".repeat(64), cols: 80, rows: 24, ...fields }));
   const result = new Uint8Array(payload.byteLength + 6);
   result.set([0x42, 0x4f, 0x53, 0x31, payload.byteLength >>> 8, payload.byteLength & 0xff]);
   result.set(payload, 6);
@@ -313,9 +328,24 @@ function createHarness(options: {
   const injectGuestFrame = (sessionId: string, seq: number, fields: Record<string, unknown>) => {
     injectGuestBytes(guestFrame(sessionId, seq, fields));
   };
+  const injectGuestBootstrap = (fields: Record<string, unknown> = {}) => {
+    injectGuestBytes(guestBootstrap({ guestBuildId: manifest.guest.buildId, ...fields }));
+  };
+  const startProtocol = () => {
+    const instance = FakeV86.instances[0];
+    assert.ok(instance);
+    instance.trigger("emulator-ready", undefined as never);
+    injectGuestBootstrap();
+    return framePayload(instance.sentControlFrames[0]!);
+  };
+  const injectReady = (activeSessionId: string, cols = 80, rows = 24) => {
+    injectGuestFrame(activeSessionId, 1, { op: "ready", guestBuildId: manifest.guest.buildId, cols, rows });
+    injectGuestFrame(activeSessionId, 2, { op: "localeAck", locale: "en" });
+  };
   const dispose = () => post({ type: "dispose" });
   return {
-    files, manifest, manifestAssets, fetchLog, messages, post, start, requestStart, waitFor, injectGuestBytes, injectGuestFrame, dispose,
+    files, manifest, manifestAssets, fetchLog, messages, post, start, requestStart, waitFor, injectGuestBytes,
+    injectGuestFrame, injectGuestBootstrap, startProtocol, injectReady, dispose,
     pauseStarted, releasePause,
     newXMLHttpRequest: () => vm.runInContext("new XMLHttpRequest()", context),
     fireTimer,
@@ -332,23 +362,25 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   assert.equal(harness.fetchLog.some((url) => url.endsWith("/alpine/guest-build.json")), true,
     "the declared guest build descriptor is verified before emulator construction");
   emulator.trigger("emulator-ready", undefined as never);
+  assert.equal(emulator.options.autostart, false, "v86 waits for listeners before starting");
+  assert.equal(emulator.runCalls, 1);
+  assert.equal(emulator.serial1ListenerInstalledAtRun, true, "the COM2 listener is installed before v86 runs");
+  assert.equal(emulator.sentControlFrames.length, 0, "the host sends no COM2 bytes before bootstrap");
+  harness.injectGuestBootstrap();
   const hello = framePayload(emulator.sentControlFrames[0]!);
   assert.equal(hello.op, "hello");
   assert.deepEqual({ cols: hello.cols, rows: hello.rows }, { cols: 80, rows: 24 });
 
   harness.post({ type: "resize", cols: 100, rows: 30 });
-  harness.injectGuestFrame(String(hello.sessionId), 1, {
-    op: "ready",
-    guestBuildId: harness.manifest.guest.buildId,
-    cols: 80,
-    rows: 24,
-  });
+  harness.injectReady(String(hello.sessionId));
   let controlOps = emulator.sentControlFrames.map(framePayload).map((frame) => frame.op);
   assert.deepEqual(controlOps, ["hello", "setLocale", "resize"]);
+  assert.equal(framePayload(emulator.sentControlFrames[0]!).seq, 1, "hello starts the host sequence at one");
+  assert.equal(framePayload(emulator.sentControlFrames[1]!).seq, 2, "locale follows ready as host sequence two");
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
 
   harness.post({ type: "resize", cols: 120, rows: 40 });
-  harness.injectGuestFrame(String(hello.sessionId), 2, { op: "resizeAck", cols: 100, rows: 30 });
+  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 100, rows: 30 });
   controlOps = emulator.sentControlFrames.map(framePayload).map((frame) => frame.op);
   assert.deepEqual(controlOps, ["hello", "setLocale", "resize", "resize"]);
   assert.deepEqual(
@@ -356,7 +388,7 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     { cols: 120, rows: 40 },
   );
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
-  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 120, rows: 40 });
+  harness.injectGuestFrame(String(hello.sessionId), 4, { op: "resizeAck", cols: 120, rows: 40 });
   assert.equal(harness.messages.filter((entry) => entry.type === "control-ready").length, 1);
 
   harness.post({ type: "input", bytes: new Uint8Array([65, 66]) });
@@ -364,7 +396,7 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   assert.equal(firstFence.op, "inputFence");
   assert.equal(firstFence.fenceId, 1);
   assert.equal(firstFence.inputBytes, 2);
-  harness.injectGuestFrame(String(hello.sessionId), 4, {
+  harness.injectGuestFrame(String(hello.sessionId), 5, {
     op: "inputFenceAck", fenceId: 1, inputBytes: 2, state: "cleanPrompt",
   });
   const fenceAck = harness.messages.find((entry) => entry.type === "input-fence-ack");
@@ -376,12 +408,12 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   const secondFence = framePayload(emulator.sentControlFrames.at(-1)!);
   assert.equal(secondFence.fenceId, 2);
   assert.equal(secondFence.inputBytes, 3);
-  harness.injectGuestFrame(String(hello.sessionId), 5, {
+  harness.injectGuestFrame(String(hello.sessionId), 6, {
     op: "inputFenceAck", fenceId: 1, inputBytes: 2, state: "cleanPrompt",
   });
   assert.equal(harness.messages.filter((entry) => entry.type === "control-error").length, 0,
     "a valid superseded fence does not authorize an action or revoke the current fence");
-  harness.injectGuestFrame(String(hello.sessionId), 6, {
+  harness.injectGuestFrame(String(hello.sessionId), 7, {
     op: "inputFenceAck", fenceId: 2, inputBytes: 3, state: "cleanPrompt",
   });
   assert.equal(emulator.sentSerialInput.length, 2, "raw COM1 chunks are delivered independently of COM2 fencing");
@@ -397,15 +429,9 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   const harness = createHarness();
   await harness.start();
   const emulator = FakeV86.instances[0]!;
-  emulator.trigger("emulator-ready", undefined as never);
-  const hello = framePayload(emulator.sentControlFrames[0]!);
-  harness.injectGuestFrame(String(hello.sessionId), 1, {
-    op: "ready",
-    guestBuildId: harness.manifest.guest.buildId,
-    cols: 80,
-    rows: 24,
-  });
-  harness.injectGuestFrame(String(hello.sessionId), 2, {
+  const hello = harness.startProtocol();
+  harness.injectReady(String(hello.sessionId));
+  harness.injectGuestFrame(String(hello.sessionId), 3, {
     op: "ack",
     ackSeq: 3,
     requestId: 19,
@@ -427,16 +453,10 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   await harness.waitFor(() => FakeV86.instances.length > 0 || harness.messages.some((entry) => entry.type === "error"));
   const emulator = FakeV86.instances[0];
   assert.ok(emulator, JSON.stringify(harness.messages));
-  emulator.trigger("emulator-ready", undefined as never);
-  const hello = framePayload(emulator.sentControlFrames[0]!);
+  const hello = harness.startProtocol();
   assert.deepEqual({ cols: hello.cols, rows: hello.rows }, { cols: 100, rows: 30 },
     "a resize during initial asset loading must survive until the guest hello");
-  harness.injectGuestFrame(String(hello.sessionId), 1, {
-    op: "ready",
-    guestBuildId: harness.manifest.guest.buildId,
-    cols: 100,
-    rows: 30,
-  });
+  harness.injectReady(String(hello.sessionId), 100, 30);
   assert.equal(harness.messages.filter((entry) => entry.type === "control-ready").length, 1);
   harness.dispose();
 }
@@ -445,24 +465,18 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   const harness = createHarness({ manualTimers: true });
   await harness.start();
   const emulator = FakeV86.instances[0]!;
-  emulator.trigger("emulator-ready", undefined as never);
-  const hello = framePayload(emulator.sentControlFrames[0]!);
+  const hello = harness.startProtocol();
   assert.deepEqual({ cols: hello.cols, rows: hello.rows }, { cols: 80, rows: 24 });
   harness.post({ type: "resize", cols: 100, rows: 30 });
-  harness.injectGuestFrame(String(hello.sessionId), 1, {
-    op: "ready",
-    guestBuildId: harness.manifest.guest.buildId,
-    cols: 80,
-    rows: 24,
-  });
-  harness.injectGuestFrame(String(hello.sessionId), 2, {
+  harness.injectReady(String(hello.sessionId));
+  harness.injectGuestFrame(String(hello.sessionId), 3, {
     op: "shellReady",
     guestBuildId: harness.manifest.guest.buildId,
   });
   assert.equal(harness.messages.some((entry) => entry.type === "shell-ready"), false,
     "shell startup cannot be delivered while the requested initial resize is pending");
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
-  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 100, rows: 30 });
+  harness.injectGuestFrame(String(hello.sessionId), 4, { op: "resizeAck", cols: 100, rows: 30 });
   assert.deepEqual(
     harness.messages.filter((entry) => entry.type === "control-ready" || entry.type === "shell-ready").map((entry) => entry.type),
     ["control-ready", "shell-ready"],
@@ -478,16 +492,10 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   const harness = createHarness({ manualTimers: true });
   await harness.start();
   const emulator = FakeV86.instances[0]!;
-  emulator.trigger("emulator-ready", undefined as never);
-  const hello = framePayload(emulator.sentControlFrames[0]!);
+  const hello = harness.startProtocol();
   harness.post({ type: "resize", cols: 100, rows: 30 });
-  harness.injectGuestFrame(String(hello.sessionId), 1, {
-    op: "ready",
-    guestBuildId: harness.manifest.guest.buildId,
-    cols: 80,
-    rows: 24,
-  });
-  harness.injectGuestFrame(String(hello.sessionId), 2, {
+  harness.injectReady(String(hello.sessionId));
+  harness.injectGuestFrame(String(hello.sessionId), 3, {
     op: "shellReady",
     guestBuildId: harness.manifest.guest.buildId,
   });
@@ -496,9 +504,33 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     "a missing initial resize ACK remains bounded by the Worker timeout");
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready" || entry.type === "shell-ready"), false,
     "startup never claims readiness when the resize ACK is missing");
-  harness.injectGuestFrame(String(hello.sessionId), 3, { op: "resizeAck", cols: 100, rows: 30 });
+  harness.injectGuestFrame(String(hello.sessionId), 4, { op: "resizeAck", cols: 100, rows: 30 });
   assert.equal(harness.messages.some((entry) => entry.type === "shell-ready"), false,
     "a late ACK cannot reopen a failed startup");
+  harness.dispose();
+}
+
+{
+  const harness = createHarness();
+  await harness.start();
+  const emulator = FakeV86.instances[0]!;
+  emulator.trigger("emulator-ready", undefined as never);
+  harness.injectGuestBootstrap({ guestBuildId: "f".repeat(64) });
+  assert.equal(emulator.sentControlFrames.length, 0, "a bootstrap for another pinned build cannot establish a session");
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true);
+  harness.dispose();
+}
+
+{
+  const harness = createHarness();
+  await harness.start();
+  const hello = harness.startProtocol();
+  const emulator = FakeV86.instances[0]!;
+  harness.injectGuestFrame(String(hello.sessionId), 1, { op: "shellState", state: "cleanPrompt" });
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "ready must be guest sequence one after session adoption");
+  assert.equal(emulator.sentControlFrames.map(framePayload).map((frame) => frame.op).join(","), "hello",
+    "the host does not send locale before the required ready frame");
   harness.dispose();
 }
 

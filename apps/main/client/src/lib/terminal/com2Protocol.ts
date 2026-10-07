@@ -39,6 +39,7 @@ const portfolioLinkIdSet = new Set<string>(PORTFOLIO_LINK_IDS);
 export type ShellState = "cleanPrompt" | "editing" | "busy" | "unknown";
 export type GuestAction = "tour" | "plugins" | "links" | "projects" | "contact" | "github" | "a" | "ls" | "eza" | "clear";
 export type GuestControlFrame =
+  | { op: "bootstrap"; guestBuildId: string; cols: number; rows: number }
   | { op: "ready"; guestBuildId: string; cols: number; rows: number }
   | { op: "shellReady"; guestBuildId: string }
   | { op: "shellState"; state: ShellState }
@@ -180,6 +181,16 @@ function hasDuplicateTopLevelKeys(text: string): boolean {
   }
   return false;
 }
+function parseBootstrapFrame(value: unknown): Extract<GuestControlFrame, { op: "bootstrap" }> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const frame = value as Record<string, unknown>;
+  if (!hasExactFields(frame, ["v", "op", "guestBuildId", "cols", "rows"])
+    || frame.v !== 1 || frame.op !== "bootstrap"
+    || typeof frame.guestBuildId !== "string" || !BUILD_ID_PATTERN.test(frame.guestBuildId)
+    || !isIntegerInRange(frame.cols, 2, 300) || !isIntegerInRange(frame.rows, 2, 120)) return null;
+  return { op: "bootstrap", guestBuildId: frame.guestBuildId, cols: frame.cols, rows: frame.rows };
+}
+
 
 function parseGuestFrame(value: unknown, sessionId: string): { seq: number; frame: GuestControlFrame } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
@@ -257,12 +268,25 @@ export class Com2Decoder {
   private length = 0;
   private lastSequence = 0;
   private failure: Error | null = null;
+  private bootstrapSeen = false;
+  private sessionId: string | null = null;
 
-  constructor(private readonly sessionId: string) {
-    if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error("Invalid COM2 session identity");
+  constructor(sessionId?: string) {
+    if (sessionId !== undefined) {
+      if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error("Invalid COM2 session identity");
+      this.sessionId = sessionId;
+    }
   }
 
-  push(bytes: Uint8Array, onFrame: (frame: GuestControlFrame, sequence: number) => void): void {
+  adoptSession(sessionId: string): void {
+    if (this.failure) throw this.failure;
+    if (!SESSION_ID_PATTERN.test(sessionId)) this.reject("session identity is invalid");
+    if (!this.bootstrapSeen || this.sessionId !== null) this.reject("session cannot be adopted");
+    this.sessionId = sessionId;
+    this.lastSequence = 0;
+  }
+
+  push(bytes: Uint8Array, onFrame: (frame: GuestControlFrame, sequence: number | null) => void): void {
     if (this.failure) throw this.failure;
     for (let index = 0; index < bytes.length; index += 1) {
       if (this.length === this.buffer.length) this.reject("frame exceeds the bounded buffer");
@@ -271,7 +295,7 @@ export class Com2Decoder {
     }
   }
 
-  private consume(onFrame: (frame: GuestControlFrame, sequence: number) => void): void {
+  private consume(onFrame: (frame: GuestControlFrame, sequence: number | null) => void): void {
     while (this.length >= MAGIC.length) {
       if (MAGIC.some((byte, index) => this.buffer[index] !== byte)) this.reject("frame magic is invalid");
       if (this.length < HEADER_BYTES) return;
@@ -292,12 +316,21 @@ export class Com2Decoder {
       } catch {
         this.reject("frame is not valid UTF-8 JSON");
       }
+      if (this.sessionId === null) {
+        if (this.bootstrapSeen) this.reject("session has not been adopted");
+        const frame = parseBootstrapFrame(value);
+        if (!frame) this.reject("first frame is not a valid bootstrap");
+        this.bootstrapSeen = true;
+        this.drop(frameLength);
+        onFrame(frame, null);
+        continue;
+      }
       const parsed = parseGuestFrame(value, this.sessionId);
       if (!parsed) this.reject("frame session, version, operation, fields, or values are invalid");
       if (parsed.seq !== this.lastSequence + 1) this.reject("frame sequence is not contiguous");
       this.lastSequence = parsed.seq;
-      onFrame(parsed.frame, parsed.seq);
       this.drop(frameLength);
+      onFrame(parsed.frame, parsed.seq);
     }
   }
 

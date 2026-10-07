@@ -62,6 +62,7 @@ let currentFence: { fenceId: number; inputBytes: number } | null = null;
 let currentColumns = 80;
 let currentRows = 24;
 let currentLocale: "en" | "ru" = "en";
+let initialLocaleAck: "en" | "ru" | null = null;
 let guestReady = false;
 let shellReady = false;
 let shellReadySent = false;
@@ -353,7 +354,51 @@ function sendDesiredResize(): void {
   }, 10_000);
 }
 
-function handleControlFrame(frame: GuestControlFrame, sequence: number) {
+function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
+  if (frame.op === "bootstrap") {
+    if (sequence !== null || sessionId !== null || guestReady) {
+      failControl("Guest bootstrap is not the first control frame");
+      return;
+    }
+    if (frame.guestBuildId !== guestBuildId) {
+      failControl("Guest bootstrap identity does not match the pinned build");
+      return;
+    }
+    const adoptedSessionId = createSessionId();
+    try {
+      controlDecoder?.adoptSession(adoptedSessionId);
+    } catch (error) {
+      failControl(error instanceof Error ? error.message : "Guest control session could not be adopted");
+      return;
+    }
+    sessionId = adoptedSessionId;
+    hostSequence = 0;
+    helloDimensions = { cols: currentColumns, rows: currentRows };
+    appliedDimensions = null;
+    resizeInFlight = null;
+    controlReadySent = false;
+    initialLocaleAck = null;
+    if (resizeTimer !== null) clearTimeout(resizeTimer);
+    resizeTimer = null;
+    sendControl({ op: "hello", ...helloDimensions });
+    return;
+  }
+  if (sequence === null) {
+    failControl("Guest session frame arrived before session adoption");
+    return;
+  }
+  if (!guestReady && (frame.op !== "ready" || sequence !== 1)) {
+    failControl("Guest ready must be the first session-bound frame");
+    return;
+  }
+  if (initialLocaleAck !== null) {
+    if (sequence !== 2 || frame.op !== "localeAck" || frame.locale !== initialLocaleAck) {
+      failControl("Guest locale acknowledgement does not match the initial locale");
+      return;
+    }
+    initialLocaleAck = null;
+    return;
+  }
   if (frame.op === "ready") {
     if (guestReady || !helloDimensions || frame.guestBuildId !== guestBuildId
       || frame.cols !== helloDimensions.cols || frame.rows !== helloDimensions.rows) {
@@ -362,6 +407,12 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number) {
     }
     guestReady = true;
     appliedDimensions = helloDimensions;
+    const locale = currentLocale;
+    initialLocaleAck = locale;
+    if (!sendControl({ op: "setLocale", locale })) {
+      initialLocaleAck = null;
+      return;
+    }
     sendDesiredResize();
   } else if (frame.op === "resizeAck") {
     if (!resizeInFlight || frame.cols !== resizeInFlight.cols || frame.rows !== resizeInFlight.rows) {
@@ -439,22 +490,14 @@ function queueControlOutput(byte: number) {
 }
 
 function createEmulator(options: V86Options): V86 {
-  const instance = new V86({ ...options, autostart: true, fastboot: true });
+  const instance = new V86({ ...options, autostart: false, fastboot: true });
   emulator = instance;
+  controlDecoder = new Com2Decoder();
   instance.add_listener("download-progress", ({ loaded, total }) => send({ type: "progress", loaded, total }));
   instance.add_listener("download-error", () => fail("A pinned guest asset could not be loaded"));
   instance.add_listener("emulator-ready", () => {
     if (disposed || failed) return;
-    sessionId = createSessionId();
-    controlDecoder = new Com2Decoder(sessionId);
-    helloDimensions = { cols: currentColumns, rows: currentRows };
-    appliedDimensions = null;
-    resizeInFlight = null;
-    controlReadySent = false;
-    if (resizeTimer !== null) clearTimeout(resizeTimer);
-    resizeTimer = null;
-    if (!sendControl({ op: "hello", ...helloDimensions })) return;
-    sendControl({ op: "setLocale", locale: currentLocale });
+    void instance.run().catch(() => fail("Unable to start the guest"));
   });
   instance.add_listener("serial0-output-byte", queueOutput);
   instance.add_listener("serial1-output-byte", queueControlOutput);

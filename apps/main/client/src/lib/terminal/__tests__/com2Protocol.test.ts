@@ -13,6 +13,14 @@ function guestFrame(seq: number, fields: Record<string, unknown>, id = sessionId
   return frame;
 }
 
+function bootstrapFrame(fields: Record<string, unknown> = {}): Uint8Array {
+  const payload = new TextEncoder().encode(JSON.stringify({ v: 1, op: "bootstrap", guestBuildId, cols: 80, rows: 24, ...fields }));
+  const frame = new Uint8Array(payload.byteLength + 6);
+  frame.set([0x42, 0x4f, 0x53, 0x31, payload.byteLength >>> 8, payload.byteLength & 0xff]);
+  frame.set(payload, 6);
+  return frame;
+}
+
 function join(...chunks: Uint8Array[]): Uint8Array {
   const result = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.byteLength, 0));
   let offset = 0;
@@ -31,13 +39,69 @@ const stream = join(
   guestFrame(3, { op: "ack", ackSeq: 7, requestId: 19, status: "accepted" }),
 );
 for (let offset = 0; offset < stream.byteLength; offset += 1) {
-  decoder.push(stream.subarray(offset, offset + 1), (frame, seq) => decoded.push({ frame, seq }));
+  decoder.push(stream.subarray(offset, offset + 1), (frame, seq) => {
+    if (seq === null) throw new Error("session decoder received an unexpected bootstrap");
+    decoded.push({ frame, seq });
+  });
 }
 assert.deepEqual(decoded, [
   { seq: 1, frame: { op: "ready", guestBuildId, cols: 80, rows: 24 } },
   { seq: 2, frame: { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" } },
   { seq: 3, frame: { op: "ack", ackSeq: 7, requestId: 19, status: "accepted" } },
 ]);
+
+const bootstrapDecoder = new Com2Decoder();
+let acceptedBootstrap = false;
+bootstrapDecoder.push(bootstrapFrame(), (frame, sequence) => {
+  assert.equal(sequence, null);
+  assert.deepEqual(frame, { op: "bootstrap", guestBuildId, cols: 80, rows: 24 });
+  acceptedBootstrap = true;
+  bootstrapDecoder.adoptSession(sessionId);
+});
+assert.equal(acceptedBootstrap, true, "the first sessionless frame is accepted as bootstrap");
+const postBootstrapFrames: Array<{ frame: GuestControlFrame; seq: number | null }> = [];
+bootstrapDecoder.push(
+  guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }),
+  (frame, seq) => postBootstrapFrames.push({ frame, seq }),
+);
+assert.deepEqual(postBootstrapFrames, [
+  { frame: { op: "ready", guestBuildId, cols: 80, rows: 24 }, seq: 1 },
+], "session sequence numbering begins at one after adoption");
+assert.throws(() => bootstrapDecoder.adoptSession(sessionId), /session cannot be adopted/,
+  "a session can only be adopted once");
+
+const unboundDecoder = new Com2Decoder();
+unboundDecoder.push(bootstrapFrame(), () => undefined);
+assert.throws(
+  () => unboundDecoder.push(guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }), () => undefined),
+  /session has not been adopted/,
+  "a session frame cannot follow bootstrap until the host adopts its session",
+);
+assert.throws(
+  () => new Com2Decoder().push(guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }), () => undefined),
+  /first frame is not a valid bootstrap/,
+  "session-bound frames cannot precede bootstrap",
+);
+for (const fields of [
+  { guestBuildId: "A".repeat(64) },
+  { guestBuildId: "a".repeat(63) },
+  { cols: 1 },
+  { rows: 121 },
+  { sessionId, seq: 1 },
+  { extra: true },
+  { v: 2 },
+]) {
+  assert.throws(
+    () => new Com2Decoder().push(bootstrapFrame(fields), () => undefined),
+    /first frame is not a valid bootstrap/,
+    `invalid bootstrap ${JSON.stringify(fields)} is rejected`,
+  );
+}
+assert.throws(
+  () => new Com2Decoder(sessionId).push(bootstrapFrame(), () => undefined),
+  /frame session, version, operation, fields, or values are invalid/,
+  "a pre-session bootstrap is not accepted by a session-bound decoder",
+);
 
 const decodedAck = decoded[2]?.frame;
 assert.ok(decodedAck?.op === "ack");
@@ -47,7 +111,7 @@ assert.equal(matchesDispatchAck(decodedAck, { ackSeq: 7, requestId: 20 }), false
 assert.equal(matchesDispatchAck(decodedAck, null), false, "an ACK cannot match without an outstanding dispatch");
 
 const postCleanDecoder = new Com2Decoder(sessionId);
-const postCleanFrames: Array<{ frame: GuestControlFrame; seq: number }> = [];
+const postCleanFrames: Array<{ frame: GuestControlFrame; seq: number | null }> = [];
 postCleanDecoder.push(join(
   guestFrame(1, { op: "ready", guestBuildId, cols: 80, rows: 24 }),
   guestFrame(2, { op: "inputFenceAck", fenceId: 1, inputBytes: 0, state: "cleanPrompt" }),
