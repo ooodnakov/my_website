@@ -9,7 +9,7 @@ const staging = path.resolve(stagingArgument);
 
 const fixed = [
   "docs/browser-os/com2-protocol.md",
-  "apps/main/client/src/data/home/index.ts",
+  "tools/browser-os/.dockerignore",
   "tools/browser-os/Dockerfile",
   "tools/browser-os/build.sh",
   "tools/browser-os/guest-build.sh",
@@ -29,11 +29,12 @@ async function walk(directory, prefix) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
+    if (entry.isDirectory() && entry.name === "__pycache__") continue;
     const filename = path.join(directory, entry.name);
     const relative = `${prefix}/${entry.name}`;
     if (entry.isDirectory()) files.push(...await walk(filename, relative));
-    else if (entry.isFile()) files.push([relative, filename]);
-    else throw new Error(`Unsupported guest build input: ${relative}`);
+    else if (entry.isFile() && !entry.name.endsWith(".pyc") && !entry.name.endsWith(".pyo")) files.push([relative, filename]);
+    else if (!entry.isFile()) throw new Error(`Unsupported guest build input: ${relative}`);
   }
   return files;
 }

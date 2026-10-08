@@ -79,13 +79,14 @@ export function validateControlReadiness(ready, initialLocaleAck, shellReady, ex
   }
 }
 
-export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000, onShellReady = () => {}, expectedBuildId = null) {
+export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000, onShellReady = () => {}, expectedBuildId = null, protocolCodec = null) {
   const serial = [];
   const decoder = new TextDecoder();
   const start = bootStartedAt;
   const controlBytes = [];
   const controlFrames = [];
   const controlHistory = [];
+  const com2Decoder = protocolCodec === null ? null : new protocolCodec.Com2Decoder();
   let controlError = null;
   let ctrlCToPromptMs = null;
   let controlSequence = 1;
@@ -94,6 +95,26 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
   const listener = byte => serial.push(byte);
   const controlListener = byte => {
     if (controlError) return;
+    if (com2Decoder !== null) {
+      try {
+        com2Decoder.push(Uint8Array.of(byte), (frame, sequence) => {
+          const decoded = frame.op === "bootstrap"
+            ? { v: 1, ...frame }
+            : { v: 1, sessionId: controlSessionId, seq: sequence, ...frame };
+          if (controlHistory.length >= 8192) {
+            controlError = "guest emitted more than 8192 control frames";
+            return;
+          }
+          controlHistory.push(decoded);
+          controlFrames.push(decoded);
+          if (frame.op === "bootstrap") com2Decoder.adoptSession(controlSessionId);
+          if (controlFrames.length > 64) controlFrames.shift();
+        });
+      } catch (error) {
+        controlError = error.message;
+      }
+      return;
+    }
     controlBytes.push(byte);
     while (controlBytes.length >= 6) {
       if (controlBytes[0] !== 0x42 || controlBytes[1] !== 0x4f || controlBytes[2] !== 0x53 || controlBytes[3] !== 0x31) {
@@ -157,6 +178,11 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
     }
   };
   const sendRawControl = value => {
+    if (protocolCodec !== null) {
+      const { v, sessionId, seq, ...frame } = value;
+      emulator.serial_send_bytes(1, protocolCodec.encodeHostControlFrame(sessionId, seq, frame));
+      return;
+    }
     const payload = new TextEncoder().encode(JSON.stringify(value));
     const frame = new Uint8Array(6 + payload.length);
     frame.set([0x42, 0x4f, 0x53, 0x31, payload.length >> 8, payload.length & 0xff]);
@@ -214,6 +240,10 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
     const initialLocaleAck = await waitForControl(frame => frame.op === "localeAck" && frame.locale === "en");
     if (initialLocaleAck.seq !== 2 || initialLocaleAck.sessionId !== controlSessionId) {
       throw new Error(`COM2 initial locale ACK did not follow ready at guest seq 2: ${JSON.stringify(initialLocaleAck)}`);
+    }
+    const shellReady = await waitForControl(frame => frame.op === "shellReady", timeoutMs);
+    if (shellReady.sessionId !== controlSessionId || shellReady.guestBuildId !== expectedBuildId) {
+      throw new Error(`COM2 shellReady did not follow the initial locale ACK in the adopted session: ${JSON.stringify(shellReady)}`);
     }
     validateControlReadiness(controlReady, initialLocaleAck, shellReady, expectedBuildId);
     const bootMs = Date.now() - start;

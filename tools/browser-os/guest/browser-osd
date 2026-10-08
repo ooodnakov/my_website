@@ -160,6 +160,7 @@ class Broker:
         signal.signal(signal.SIGWINCH, signal.SIG_IGN)
         self.session = None
         self.bootstrapped = False
+        self.bootstrap_bytes_remaining = None
         self.parser = FrameParser()
         self.revoked = False
         self.host_seq = 1
@@ -248,6 +249,8 @@ class Broker:
     def send_bootstrap(self):
         if self.com2 is None:
             return
+        if self.bootstrapped or self.bootstrap_bytes_remaining is not None:
+            raise RuntimeError("COM2 bootstrap was already emitted")
         value = {
             "v": 1,
             "op": "bootstrap",
@@ -259,6 +262,8 @@ class Broker:
         if len(self.com2_output) + len(encoded) > FIFO_LIMIT:
             raise RuntimeError("COM2 output queue overflow")
         self.com2_output.extend(encoded)
+        self.bootstrap_bytes_remaining = len(encoded)
+
     def frame(self, op, **fields):
         if self.session is None or self.com2 is None:
             return None
@@ -337,26 +342,12 @@ class Broker:
             self.pending_shell_state = None
             self.frame("shellState", state=state)
 
-    def handle_bootstrap(self, value):
-        if self.bootstrapped or self.session is not None:
-            raise ValueError("repeated bootstrap")
-        if set(value) != {"v", "op", "guestBuildId", "cols", "rows"}:
-            raise ValueError("bad bootstrap fields")
-        if value["v"] != 1 or type(value["v"]) is not int or value["op"] != "bootstrap":
-            raise ValueError("bad bootstrap operation")
-        if value["guestBuildId"] != self.build_id:
-            raise ValueError("bad bootstrap build identity")
-        cols, rows = value["cols"], value["rows"]
-        if not int_field(cols, 2, 300) or not int_field(rows, 2, 120):
-            raise ValueError("bad bootstrap dimensions")
-        self.bootstrapped = True
 
     def handle_frame(self, value):
         if self.revoked:
             return
         if not self.bootstrapped:
-            self.handle_bootstrap(value)
-            return
+            raise ValueError("host frame arrived before guest bootstrap")
         if self.session is None:
             session, _ = self.validate_envelope(value, first=True)
             self.session = session
@@ -511,6 +502,9 @@ class Broker:
         if not chunk:
             self.reply(client, "error invalid-request")
             return
+        if not self.ready or not self.initial_locale_acknowledged:
+            self.reply(client, "error unavailable")
+            return
         buffer = self.cli_clients.get(client)
         if buffer is None:
             return
@@ -527,6 +521,9 @@ class Broker:
         self.handle_cli(client, line)
 
     def handle_cli(self, client, line):
+        if not self.ready or not self.initial_locale_acknowledged:
+            self.reply(client, "error unavailable")
+            return
         try:
             fields = line.decode("ascii", "strict").split(" ")
         except UnicodeDecodeError:
@@ -613,6 +610,11 @@ class Broker:
                 raise
             return
         del queue[:count]
+        if count and fd == self.com2 and self.bootstrap_bytes_remaining is not None:
+            self.bootstrap_bytes_remaining -= count
+            if self.bootstrap_bytes_remaining == 0:
+                self.bootstrap_bytes_remaining = None
+                self.bootstrapped = True
         return count
 
     def run(self):

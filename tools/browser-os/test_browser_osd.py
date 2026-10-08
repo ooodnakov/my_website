@@ -1,3 +1,4 @@
+import os
 import importlib.machinery
 import importlib.util
 import pathlib
@@ -151,7 +152,11 @@ class BootHandshakeTests(unittest.TestCase):
         broker = BROKER.Broker.__new__(BROKER.Broker)
         broker.build_id = "a" * 64
         broker.session = None
+        broker.com2 = object()
+        broker.com2_output = bytearray()
+        broker.cols, broker.rows = 80, 24
         broker.bootstrapped = False
+        broker.bootstrap_bytes_remaining = None
         broker.revoked = False
         broker.host_seq = 1
         broker.guest_seq = 1
@@ -162,6 +167,7 @@ class BootHandshakeTests(unittest.TestCase):
         broker.pending_shell_state = "busy"
         broker.shell_state = "busy"
         broker.frames = []
+        broker.cli_clients = {}
 
         def record_frame(operation, **fields):
             sequence = broker.guest_seq
@@ -176,14 +182,28 @@ class BootHandshakeTests(unittest.TestCase):
         broker.set_locale = lambda locale: setattr(broker, "locale", locale)
         return broker
 
-    def test_bootstrap_then_host_session_and_locale_ack_gate_startup_frames(self):
+    def flush_bootstrap(self, broker):
+        read_fd, write_fd = os.pipe()
+        previous_com2 = broker.com2
+        broker.com2 = write_fd
+        try:
+            broker.flush_fd(write_fd, broker.com2_output)
+            return os.read(read_fd, 4096)
+        finally:
+            broker.com2 = previous_com2
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_guest_bootstrap_then_host_session_and_locale_ack_gate_startup_frames(self):
         broker = self.make_broker()
-        bootstrap = {
+        broker.send_bootstrap()
+        self.assertFalse(broker.bootstrapped)
+        bootstrap_wire = self.flush_bootstrap(broker)
+        self.assertTrue(broker.bootstrapped)
+        self.assertEqual(BROKER.FrameParser().feed(bootstrap_wire), [{
             "v": 1, "op": "bootstrap", "guestBuildId": broker.build_id,
             "cols": 80, "rows": 24,
-        }
-        broker.handle_frame(bootstrap)
-        self.assertTrue(broker.bootstrapped)
+        }])
         self.assertEqual(broker.frames, [])
 
         broker.handle_frame({
@@ -220,23 +240,60 @@ class BootHandshakeTests(unittest.TestCase):
             ("localeAck", "en", 5),
         )
 
-    def test_malformed_bootstrap_and_pre_bootstrap_hello_are_rejected(self):
-        for first in (
-            {"v": 1, "op": "hello", "sessionId": "b" * 32, "seq": 1, "cols": 80, "rows": 24},
-            {"v": 1, "op": "bootstrap", "guestBuildId": "c" * 64, "cols": 80, "rows": 24},
-            {"v": 1, "op": "bootstrap", "guestBuildId": "a" * 64, "cols": True, "rows": 24},
-            {"v": 1, "op": "bootstrap", "guestBuildId": "a" * 64, "cols": 80, "rows": 24, "extra": 1},
-        ):
-            broker = self.make_broker()
+    def test_bootstrap_readiness_waits_for_all_partial_uart_writes(self):
+        broker = self.make_broker()
+        broker.send_bootstrap()
+        self.assertEqual(broker.bootstrap_bytes_remaining, len(broker.com2_output))
+        broker.com2 = 7
+        original_write = BROKER.os.write
+        writes = []
+
+        def write_partial(_fd, data):
+            chunk = bytes(data[:3])
+            writes.append(chunk)
+            return len(chunk)
+
+        BROKER.os.write = write_partial
+        try:
+            while broker.com2_output:
+                broker.flush_fd(broker.com2, broker.com2_output)
+                if broker.com2_output:
+                    self.assertEqual(broker.bootstrap_bytes_remaining, len(broker.com2_output))
+        finally:
+            BROKER.os.write = original_write
+
+        self.assertGreater(len(writes), 1)
+        self.assertTrue(broker.bootstrapped)
+        self.assertIsNone(broker.bootstrap_bytes_remaining)
+
+    def test_host_cannot_bootstrap_and_invalid_first_hello_is_rejected(self):
+        broker = self.make_broker()
+        hello = {
+            "v": 1, "sessionId": "b" * 32, "seq": 1, "op": "hello",
+            "cols": 80, "rows": 24,
+        }
+        with self.assertRaisesRegex(ValueError, "before guest bootstrap"):
+            broker.handle_frame(hello)
+
+        broker.send_bootstrap()
+        with self.assertRaisesRegex(ValueError, "before guest bootstrap"):
+            broker.handle_frame(hello)
+        self.flush_bootstrap(broker)
+        invalid_first_frames = [
+            {"v": 1, "op": "bootstrap", "guestBuildId": broker.build_id, "cols": 80, "rows": 24},
+            {**hello, "seq": 2},
+            {**hello, "sessionId": "not-a-session"},
+            {**hello, "extra": 1},
+            {**hello, "cols": True},
+        ]
+        for first in invalid_first_frames:
             with self.subTest(first=first), self.assertRaises(ValueError):
                 broker.handle_frame(first)
 
     def test_resize_is_rejected_before_initial_locale_ack(self):
         broker = self.make_broker()
-        broker.handle_frame({
-            "v": 1, "op": "bootstrap", "guestBuildId": broker.build_id,
-            "cols": 80, "rows": 24,
-        })
+        broker.send_bootstrap()
+        self.flush_bootstrap(broker)
         broker.handle_frame({
             "v": 1, "sessionId": "b" * 32, "seq": 1, "op": "hello",
             "cols": 80, "rows": 24,
@@ -246,6 +303,45 @@ class BootHandshakeTests(unittest.TestCase):
                 "v": 1, "sessionId": "b" * 32, "seq": 2, "op": "resize",
                 "cols": 100, "rows": 40,
             })
+
+    def test_cli_output_and_mutations_wait_for_initial_locale_ack(self):
+        broker = self.make_broker()
+        replies = []
+        broker.reply = lambda _client, text: replies.append(text)
+        client = object()
+
+        for ready in (False, True):
+            broker.ready = ready
+            broker.initial_locale_acknowledged = False
+            for command in (b"locale ru", b"open quick-cv", b"open invalid-id", b"invalid"):
+                broker.handle_cli(client, command)
+
+        self.assertEqual(replies, ["error unavailable"] * 8)
+        self.assertFalse(hasattr(broker, "locale"))
+        self.assertEqual(broker.frames, [])
+
+    def test_cli_socket_returns_unavailable_before_parsing_any_request(self):
+        broker = self.make_broker()
+        replies = []
+        broker.reply = lambda _client, text: replies.append(text)
+
+        class Client:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def recv(self, _limit):
+                return self.payload
+
+        for ready in (False, True):
+            broker.ready = ready
+            broker.initial_locale_acknowledged = False
+            for payload in (b"locale ru\n", b"\xff\n", b"x" * 129, b"open quick-cv\nextra\n"):
+                client = Client(payload)
+                broker.cli_clients[client] = bytearray()
+                broker.read_client(client)
+
+        self.assertEqual(replies, ["error unavailable"] * 8)
+        self.assertEqual(broker.frames, [])
 
 class PortfolioActionTests(unittest.TestCase):
     def test_portfolio_actions_use_monotonic_request_ids_and_typed_ack(self):
@@ -290,6 +386,7 @@ class PortfolioActionTests(unittest.TestCase):
     def test_exhausted_portfolio_request_id_fails_closed(self):
         broker = BROKER.Broker.__new__(BROKER.Broker)
         broker.ready = True
+        broker.initial_locale_acknowledged = True
         broker.pending_cli = None
         broker.last_portfolio_request_id = BROKER.MAX_INT
         broker.link_ids = {"quick-cv"}

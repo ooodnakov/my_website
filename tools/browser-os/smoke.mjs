@@ -2,12 +2,21 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 import { runGuestSmoke } from "./smoke-core.mjs";
 import { pipeTrackedResponse } from "./smoke-http.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const protocolCodecPath = process.env.BROWSER_OS_COM2_CODEC
+  ? path.resolve(process.env.BROWSER_OS_COM2_CODEC)
+  : null;
+const protocolCodec = protocolCodecPath === null
+  ? null
+  : await import(pathToFileURL(protocolCodecPath).href);
+const protocolCodecSha256 = protocolCodecPath === null
+  ? null
+  : createHash("sha256").update(await fs.readFile(protocolCodecPath)).digest("hex");
 const defaultAssets = path.resolve(here, "../../apps/main/client/public/browser-os/alpine-3.24.2-v86-0.5.469");
 const args = process.argv.slice(2);
 const assetArgument = args.find(argument => !argument.startsWith("--"));
@@ -81,7 +90,7 @@ async function runNode() {
   const bootStartedAt = Date.now();
   const emulator = new V86(baseOptions(nodeAssets));
   try {
-    const result = await runGuestSmoke(emulator, bootStartedAt, undefined, undefined, manifest.guest.buildId);
+    const result = await runGuestSmoke(emulator, bootStartedAt, undefined, undefined, manifest.guest.buildId, protocolCodec);
     return { ...result, localAssetBytes: manifestRuntimeBytes };
   } finally {
     await emulator.destroy().catch(() => {});
@@ -247,5 +256,10 @@ const report = {
   transferBytesFromManifest: manifestRuntimeBytes,
   node: runNodeMode ? await runNode() : undefined,
   browser: runBrowserMode ? await runBrowser() : undefined,
+  websiteCodec: protocolCodecPath === null ? null : {
+    path: path.basename(protocolCodecPath),
+    sha256: protocolCodecSha256,
+    usedBy: runNodeMode ? "node" : "not-used",
+  },
 };
 console.log(JSON.stringify(report, null, 2));
