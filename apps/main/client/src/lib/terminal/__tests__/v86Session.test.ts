@@ -70,7 +70,19 @@ const session = createSession({
 });
 await session.start();
 const firstWorker = FakeWorker.instances.at(-1)!;
+session.resize(100, 30);
+session.setLanguage("ru");
+assert.deepEqual(firstWorker.messages.filter((message) => message.type === "resize"), [
+  { type: "resize", cols: 100, rows: 30 },
+], "the current resize is delivered to the Worker during the startup handshake");
+assert.deepEqual(firstWorker.messages.filter((message) => message.type === "set-language"), [
+  { type: "set-language", locale: "ru" },
+], "the current locale is delivered to the Worker during the startup handshake");
 firstWorker.emit({ type: "control-ready" });
+assert.equal(firstWorker.messages.filter((message) => message.type === "resize").length, 1,
+  "control readiness does not resend an already-acknowledged startup resize");
+assert.equal(firstWorker.messages.filter((message) => message.type === "set-language").length, 1,
+  "control readiness does not send an unacknowledged duplicate locale change");
 assert.equal(session.getState().status, "busy");
 session.input.sendBytes(new Uint8Array([0x41]));
 assert.deepEqual(firstWorker.messages.filter((message) => message.type === "input"), [

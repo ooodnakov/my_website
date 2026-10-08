@@ -422,6 +422,9 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   assert.equal(emulator.sentControlFrames.map(framePayload).some((frame) => frame.op === "dispatchAction"), false,
     "guest quick-action dispatch remains disabled without execution proof");
   assert.equal(harness.messages.some((entry) => entry.type === "control-error"), true);
+  harness.post({ type: "input", bytes: new Uint8Array([0x41, 0x03]) });
+  assert.deepEqual(Array.from(emulator.sentSerialInput.at(-1)!), [0x41, 0x03],
+    "native typing and Ctrl+C remain raw COM1 input after established COM2 control is lost");
   harness.dispose();
 }
 
@@ -545,8 +548,8 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     rows: hello.rows,
   });
   harness.injectGuestFrame(sessionId, 2, { op: "shellState", state: "cleanPrompt" });
-  assert.equal(harness.messages.some((entry) => entry.type === "control-error"), true,
-    "an advisory shell state cannot replace the required sequence-two initial locale ACK");
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "an advisory shell state during the initial locale handshake fails startup");
   assert.deepEqual(
     FakeV86.instances[0]!.sentControlFrames.map(framePayload).map((frame) => frame.op),
     ["hello", "setLocale"],
@@ -554,6 +557,145 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
   );
   assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
   harness.dispose();
+}
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.post({ type: "set-language", locale: "ru" });
+  harness.post({ type: "resize", cols: 100, rows: 30 });
+  assert.deepEqual(
+    FakeV86.instances[0]!.sentControlFrames.map(framePayload).map((frame) => frame.op),
+    ["hello", "setLocale"],
+    "locale and size changes remain queued until the initial locale ACK",
+  );
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.injectGuestFrame(sessionId, 2, { op: "localeAck", locale: "en" });
+  assert.deepEqual(
+    FakeV86.instances[0]!.sentControlFrames.map(framePayload).map((frame) => frame.op),
+    ["hello", "setLocale", "setLocale"],
+    "the newest locale is serialized after the initial locale acknowledgement",
+  );
+  assert.equal(framePayload(FakeV86.instances[0]!.sentControlFrames[2]!).locale, "ru");
+  harness.post({ type: "set-language", locale: "en" });
+  harness.post({ type: "resize", cols: 120, rows: 40 });
+  harness.injectGuestFrame(sessionId, 3, { op: "localeAck", locale: "ru" });
+  assert.deepEqual(
+    FakeV86.instances[0]!.sentControlFrames.map(framePayload).map((frame) => frame.op),
+    ["hello", "setLocale", "setLocale", "setLocale"],
+    "changes during an ACK are coalesced instead of interleaved",
+  );
+  assert.equal(framePayload(FakeV86.instances[0]!.sentControlFrames[3]!).locale, "en");
+  harness.injectGuestFrame(sessionId, 4, { op: "localeAck", locale: "en" });
+  const controls = FakeV86.instances[0]!.sentControlFrames.map(framePayload);
+  assert.equal(controls.at(-1)?.op, "resize");
+  assert.deepEqual({ cols: controls.at(-1)?.cols, rows: controls.at(-1)?.rows }, { cols: 120, rows: 40 });
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.injectGuestFrame(sessionId, 5, { op: "resizeAck", cols: 120, rows: 40 });
+  assert.equal(harness.messages.filter((entry) => entry.type === "control-ready").length, 1,
+    "readiness is published once only after the latest locale and resize are acknowledged");
+  harness.dispose();
+}
+
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.fireTimer(10_000);
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "a missing initial locale ACK times out as a fatal startup error");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.dispose();
+}
+
+for (const earlyFrame of [
+  { op: "shellReady", guestBuildId: "a".repeat(64) },
+  { op: "shellState", state: "cleanPrompt" },
+  { op: "localeAck", locale: "ru" },
+  { op: "portfolioAction", requestId: 1, action: "open", linkId: "quick-cv" },
+]) {
+  const harness = createHarness();
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.injectGuestFrame(sessionId, 2, earlyFrame);
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    `${earlyFrame.op} cannot race or replace the initial locale ACK`);
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  assert.equal(harness.messages.some((entry) => entry.type === "portfolio-action"), false);
+  harness.dispose();
+}
+
+{
+  const harness = createHarness();
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.post({ type: "input", bytes: new Uint8Array([0x41, 0x03]) });
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "input before control readiness is a fatal startup violation");
+  assert.equal(FakeV86.instances[0]!.sentSerialInput.length, 0,
+    "COM1 typing and Ctrl+C are not sent before the initial locale ACK");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.dispose();
+}
+
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.post({ type: "resize", cols: 100, rows: 30 });
+  harness.injectGuestFrame(sessionId, 2, { op: "localeAck", locale: "en" });
+  harness.injectGuestFrame(sessionId, 3, { op: "localeAck", locale: "en" });
+  assert.equal(harness.messages.some((entry) => entry.type === "error"), true,
+    "a duplicate locale ACK during startup fails closed");
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.dispose();
+}
+
+{
+  const harness = createHarness({ manualTimers: true });
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.dispose();
+  await harness.waitFor(() => harness.messages.some((entry) => entry.type === "disposed"));
+  assert.throws(() => harness.fireTimer(10_000), /Worker timer 10000ms was not scheduled/,
+    "disposal cancels a pending locale timeout");
+  assert.equal(harness.messages.some((entry) => entry.type === "error" || entry.type === "control-ready"), false);
 }
 
 

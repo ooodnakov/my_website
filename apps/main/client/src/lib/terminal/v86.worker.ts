@@ -47,6 +47,7 @@ let appliedDimensions: TerminalDimensions | null = null;
 let resizeInFlight: TerminalDimensions | null = null;
 let controlReadySent = false;
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+let localeTimer: ReturnType<typeof setTimeout> | null = null;
 let emulator: V86 | null = null;
 let outputBuffer = new Uint8Array(MAX_SERIAL_BATCH);
 let outputLength = 0;
@@ -62,7 +63,9 @@ let currentFence: { fenceId: number; inputBytes: number } | null = null;
 let currentColumns = 80;
 let currentRows = 24;
 let currentLocale: "en" | "ru" = "en";
-let initialLocaleAck: "en" | "ru" | null = null;
+let appliedLocale: "en" | "ru" | null = null;
+let pendingLocaleAck: { locale: "en" | "ru" } | null = null;
+let startupPhase: "await-bootstrap" | "await-ready" | "await-initial-locale-ack" | "syncing" | "ready" = "await-bootstrap";
 let guestReady = false;
 let shellReady = false;
 let shellReadySent = false;
@@ -83,12 +86,15 @@ function fail(message: string) {
   pendingDispatchAck = null;
   if (resizeTimer !== null) clearTimeout(resizeTimer);
   resizeTimer = null;
+  if (localeTimer !== null) clearTimeout(localeTimer);
+  localeTimer = null;
+  pendingLocaleAck = null;
   send({ type: "error", message });
 }
 
 function failControl(message: string) {
   if (disposed || failed || controlFailed) return;
-  if (!controlReadySent) {
+  if (startupPhase !== "ready") {
     fail(message);
     return;
   }
@@ -325,24 +331,21 @@ function matchesDimensions(left: TerminalDimensions | null, right: TerminalDimen
 }
 
 function signalControlReadyWhenSized(): void {
-  if (!guestReady || controlReadySent || resizeInFlight || !matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) return;
+  if (startupPhase !== "ready" || !guestReady || controlReadySent || resizeInFlight
+    || !matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })
+    || appliedLocale !== currentLocale) return;
   controlReadySent = true;
   send({ type: "control-ready" });
   signalShellReadyWhenSized();
 }
+
 function signalShellReadyWhenSized(): void {
   if (!shellReady || shellReadySent || !controlReadySent || controlFailed || failed || disposed) return;
   shellReadySent = true;
   send({ type: "shell-ready" });
 }
 
-
-function sendDesiredResize(): void {
-  if (!guestReady || controlFailed || resizeInFlight || matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) {
-    signalControlReadyWhenSized();
-    return;
-  }
-  const dimensions = { cols: currentColumns, rows: currentRows };
+function sendResize(dimensions: TerminalDimensions): void {
   resizeInFlight = dimensions;
   if (!sendControl({ op: "resize", ...dimensions })) {
     resizeInFlight = null;
@@ -354,9 +357,45 @@ function sendDesiredResize(): void {
   }, 10_000);
 }
 
+function advanceStartupSynchronization(): void {
+  if (startupPhase !== "syncing" || controlFailed || failed || disposed
+    || pendingLocaleAck || resizeInFlight) return;
+  if (appliedLocale !== currentLocale) {
+    const locale = currentLocale;
+    if (!sendControl({ op: "setLocale", locale })) return;
+    const pending = { locale };
+    pendingLocaleAck = pending;
+    localeTimer = setTimeout(() => {
+      if (pendingLocaleAck === pending) failControl("Guest locale acknowledgement timed out");
+    }, 10_000);
+    return;
+  }
+  const dimensions = { cols: currentColumns, rows: currentRows };
+  if (!matchesDimensions(appliedDimensions, dimensions)) {
+    sendResize(dimensions);
+    return;
+  }
+  startupPhase = "ready";
+  signalControlReadyWhenSized();
+}
+
+function sendDesiredResize(): void {
+  if (!guestReady || controlFailed) return;
+  if (startupPhase === "await-initial-locale-ack" || startupPhase === "await-ready") return;
+  if (startupPhase === "syncing") {
+    advanceStartupSynchronization();
+    return;
+  }
+  if (resizeInFlight || matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) {
+    signalControlReadyWhenSized();
+    return;
+  }
+  sendResize({ cols: currentColumns, rows: currentRows });
+}
+
 function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
   if (frame.op === "bootstrap") {
-    if (sequence !== null || sessionId !== null || guestReady) {
+    if (sequence !== null || sessionId !== null || startupPhase !== "await-bootstrap") {
       failControl("Guest bootstrap is not the first control frame");
       return;
     }
@@ -375,11 +414,15 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     hostSequence = 0;
     helloDimensions = { cols: currentColumns, rows: currentRows };
     appliedDimensions = null;
+    appliedLocale = null;
     resizeInFlight = null;
     controlReadySent = false;
-    initialLocaleAck = null;
+    pendingLocaleAck = null;
+    startupPhase = "await-ready";
     if (resizeTimer !== null) clearTimeout(resizeTimer);
     resizeTimer = null;
+    if (localeTimer !== null) clearTimeout(localeTimer);
+    localeTimer = null;
     sendControl({ op: "hello", ...helloDimensions });
     return;
   }
@@ -387,33 +430,61 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     failControl("Guest session frame arrived before session adoption");
     return;
   }
-  if (!guestReady && (frame.op !== "ready" || sequence !== 1)) {
-    failControl("Guest ready must be the first session-bound frame");
-    return;
-  }
-  if (initialLocaleAck !== null) {
-    if (sequence !== 2 || frame.op !== "localeAck" || frame.locale !== initialLocaleAck) {
-      failControl("Guest locale acknowledgement does not match the initial locale");
-      return;
-    }
-    initialLocaleAck = null;
-    return;
-  }
-  if (frame.op === "ready") {
-    if (guestReady || !helloDimensions || frame.guestBuildId !== guestBuildId
-      || frame.cols !== helloDimensions.cols || frame.rows !== helloDimensions.rows) {
-      failControl("Guest control daemon identity or hello dimensions do not match");
+  if (startupPhase === "await-ready") {
+    if (frame.op !== "ready" || sequence !== 1 || !helloDimensions
+      || frame.guestBuildId !== guestBuildId || frame.cols !== helloDimensions.cols || frame.rows !== helloDimensions.rows) {
+      failControl("Guest ready must be sequence one and match the pinned identity and hello dimensions");
       return;
     }
     guestReady = true;
     appliedDimensions = helloDimensions;
+    startupPhase = "await-initial-locale-ack";
     const locale = currentLocale;
-    initialLocaleAck = locale;
+    const pending = { locale };
+    pendingLocaleAck = pending;
     if (!sendControl({ op: "setLocale", locale })) {
-      initialLocaleAck = null;
+      pendingLocaleAck = null;
       return;
     }
-    sendDesiredResize();
+    localeTimer = setTimeout(() => {
+      if (pendingLocaleAck === pending) failControl("Initial guest locale acknowledgement timed out");
+    }, 10_000);
+    return;
+  }
+  if (startupPhase === "await-initial-locale-ack") {
+    const pending = pendingLocaleAck;
+    if (sequence !== 2 || frame.op !== "localeAck" || !pending || frame.locale !== pending.locale) {
+      failControl("Guest locale acknowledgement must be the matching sequence-two response");
+      return;
+    }
+    if (localeTimer !== null) clearTimeout(localeTimer);
+    localeTimer = null;
+    appliedLocale = pending.locale;
+    pendingLocaleAck = null;
+    startupPhase = "syncing";
+    advanceStartupSynchronization();
+    return;
+  }
+  if (startupPhase === "syncing" && frame.op === "localeAck") {
+    const pending = pendingLocaleAck;
+    if (!pending || frame.locale !== pending.locale) {
+      failControl("Guest sent an unexpected or mismatched locale acknowledgement during startup");
+      return;
+    }
+    if (localeTimer !== null) clearTimeout(localeTimer);
+    localeTimer = null;
+    appliedLocale = pending.locale;
+    pendingLocaleAck = null;
+    advanceStartupSynchronization();
+    return;
+  }
+  if (startupPhase === "syncing" && pendingLocaleAck
+    && frame.op !== "shellReady" && frame.op !== "shellState") {
+    failControl("Guest sent an unexpected frame while the startup locale acknowledgement was pending");
+    return;
+  }
+  if (frame.op === "ready") {
+    failControl("Guest sent a duplicate ready frame");
   } else if (frame.op === "resizeAck") {
     if (!resizeInFlight || frame.cols !== resizeInFlight.cols || frame.rows !== resizeInFlight.rows) {
       failControl("Guest resize acknowledgement does not match the in-flight resize");
@@ -423,7 +494,8 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     resizeTimer = null;
     appliedDimensions = resizeInFlight;
     resizeInFlight = null;
-    sendDesiredResize();
+    if (startupPhase === "syncing") advanceStartupSynchronization();
+    else sendDesiredResize();
   } else if (frame.op === "shellReady") {
     if (!guestReady || shellReady || frame.guestBuildId !== guestBuildId) {
       failControl("Guest shell startup identity is invalid");
@@ -442,6 +514,10 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     currentFence = null;
     send({ type: "input-fence-ack", fenceId: frame.fenceId, inputBytes: frame.inputBytes, state: frame.state });
   } else if (frame.op === "portfolioAction") {
+    if (startupPhase !== "ready" || !controlReadySent) {
+      failControl("Guest portfolio action arrived before startup completed");
+      return;
+    }
     send({
       type: "portfolio-action",
       guestSeq: sequence,
@@ -455,6 +531,8 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
       return;
     }
     pendingDispatchAck = null;
+  } else if (frame.op === "localeAck") {
+    failControl("Guest sent a duplicate or unexpected locale acknowledgement");
   } else if (frame.op === "error") {
     failControl(`Guest control protocol error: ${frame.code}`);
   }
@@ -611,7 +689,7 @@ function handleRequest(data: unknown) {
     }
   } else if (request.type === "input") {
     if (!(request.bytes instanceof Uint8Array) || !emulator || !controlReadySent) {
-      fail("Guest serial input arrived before the control daemon and initial resize were ready");
+      failControl("Guest serial input arrived before the control daemon and initial state were ready");
       return;
     }
     if (request.bytes.byteLength === 0) return;
@@ -647,7 +725,8 @@ function handleRequest(data: unknown) {
       return;
     }
     currentLocale = request.locale;
-    if (guestReady) sendControl({ op: "setLocale", locale: currentLocale });
+    if (startupPhase === "syncing") advanceStartupSynchronization();
+    else if (startupPhase === "ready" && guestReady) sendControl({ op: "setLocale", locale: currentLocale });
   } else if (request.type === "dispatch-action") {
     failControl("Host quick actions remain disabled until genuine guest consumption and execution proof is available");
   } else if (request.type === "portfolio-ack") {
@@ -668,6 +747,8 @@ async function dispose(): Promise<void> {
   pendingDispatchAck = null;
   if (resizeTimer !== null) clearTimeout(resizeTimer);
   resizeTimer = null;
+  if (localeTimer !== null) clearTimeout(localeTimer);
+  localeTimer = null;
   disposalPromise = (async () => {
     const current = emulator;
     emulator = null;

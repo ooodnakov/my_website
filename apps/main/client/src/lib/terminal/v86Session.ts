@@ -114,8 +114,6 @@ export class V86TerminalSession implements TerminalSession {
         this.workerControlReady = true;
         this.inputReady = true;
         this.controlAvailable = true;
-        this.worker?.postMessage({ type: "resize", cols: this.columns, rows: this.rows });
-        this.worker?.postMessage({ type: "set-language", locale: this.language });
         this.finishStartupWhenReady();
       }
       else if (data.type === "shell-ready") {
@@ -230,12 +228,12 @@ export class V86TerminalSession implements TerminalSession {
     if (!Number.isInteger(columns) || columns < 2 || columns > 300 || !Number.isInteger(rows) || rows < 2 || rows > 120) return;
     this.columns = columns;
     this.rows = rows;
-    if (this.inputReady) this.worker?.postMessage({ type: "resize", cols: columns, rows });
+    if (this.worker) this.worker.postMessage({ type: "resize", cols: columns, rows });
   }
 
   setLanguage(language: Language): void {
     this.language = language;
-    if (this.inputReady) this.worker?.postMessage({ type: "set-language", locale: language });
+    if (this.worker) this.worker.postMessage({ type: "set-language", locale: language });
   }
 
   runVisitorCommand(command: VisitorCommand): boolean {
