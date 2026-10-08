@@ -101,6 +101,10 @@ function failControl(message: string) {
   controlFailed = true;
   currentFence = null;
   pendingDispatchAck = null;
+  if (resizeTimer !== null) clearTimeout(resizeTimer);
+  resizeTimer = null;
+  clearLocaleAckTimer();
+  pendingLocaleAck = null;
   send({ type: "control-error", message });
 }
 
@@ -345,6 +349,24 @@ function signalShellReadyWhenSized(): void {
   send({ type: "shell-ready" });
 }
 
+function sendLocale(locale: "en" | "ru", timeoutMessage: string): boolean {
+  const pending = { locale };
+  pendingLocaleAck = pending;
+  if (!sendControl({ op: "setLocale", locale })) {
+    pendingLocaleAck = null;
+    return false;
+  }
+  localeTimer = setTimeout(() => {
+    if (pendingLocaleAck === pending) failControl(timeoutMessage);
+  }, 10_000);
+  return true;
+}
+
+function clearLocaleAckTimer(): void {
+  if (localeTimer !== null) clearTimeout(localeTimer);
+  localeTimer = null;
+}
+
 function sendResize(dimensions: TerminalDimensions): void {
   resizeInFlight = dimensions;
   if (!sendControl({ op: "resize", ...dimensions })) {
@@ -357,17 +379,11 @@ function sendResize(dimensions: TerminalDimensions): void {
   }, 10_000);
 }
 
-function advanceStartupSynchronization(): void {
-  if (startupPhase !== "syncing" || controlFailed || failed || disposed
+function advanceControlSynchronization(): void {
+  if ((startupPhase !== "syncing" && startupPhase !== "ready") || controlFailed || failed || disposed
     || pendingLocaleAck || resizeInFlight) return;
   if (appliedLocale !== currentLocale) {
-    const locale = currentLocale;
-    if (!sendControl({ op: "setLocale", locale })) return;
-    const pending = { locale };
-    pendingLocaleAck = pending;
-    localeTimer = setTimeout(() => {
-      if (pendingLocaleAck === pending) failControl("Guest locale acknowledgement timed out");
-    }, 10_000);
+    sendLocale(currentLocale, "Guest locale acknowledgement timed out");
     return;
   }
   const dimensions = { cols: currentColumns, rows: currentRows };
@@ -375,23 +391,17 @@ function advanceStartupSynchronization(): void {
     sendResize(dimensions);
     return;
   }
-  startupPhase = "ready";
+  if (startupPhase === "syncing") startupPhase = "ready";
   signalControlReadyWhenSized();
 }
 
+
 function sendDesiredResize(): void {
   if (!guestReady || controlFailed) return;
-  if (startupPhase === "await-initial-locale-ack" || startupPhase === "await-ready") return;
-  if (startupPhase === "syncing") {
-    advanceStartupSynchronization();
-    return;
-  }
-  if (resizeInFlight || matchesDimensions(appliedDimensions, { cols: currentColumns, rows: currentRows })) {
-    signalControlReadyWhenSized();
-    return;
-  }
-  sendResize({ cols: currentColumns, rows: currentRows });
+  advanceControlSynchronization();
 }
+
+
 
 function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
   if (frame.op === "bootstrap") {
@@ -439,16 +449,7 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     guestReady = true;
     appliedDimensions = helloDimensions;
     startupPhase = "await-initial-locale-ack";
-    const locale = currentLocale;
-    const pending = { locale };
-    pendingLocaleAck = pending;
-    if (!sendControl({ op: "setLocale", locale })) {
-      pendingLocaleAck = null;
-      return;
-    }
-    localeTimer = setTimeout(() => {
-      if (pendingLocaleAck === pending) failControl("Initial guest locale acknowledgement timed out");
-    }, 10_000);
+    if (!sendLocale(currentLocale, "Initial guest locale acknowledgement timed out")) return;
     return;
   }
   if (startupPhase === "await-initial-locale-ack") {
@@ -457,25 +458,23 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
       failControl("Guest locale acknowledgement must be the matching sequence-two response");
       return;
     }
-    if (localeTimer !== null) clearTimeout(localeTimer);
-    localeTimer = null;
+    clearLocaleAckTimer();
     appliedLocale = pending.locale;
     pendingLocaleAck = null;
     startupPhase = "syncing";
-    advanceStartupSynchronization();
+    advanceControlSynchronization();
     return;
   }
-  if (startupPhase === "syncing" && frame.op === "localeAck") {
+  if ((startupPhase === "syncing" || startupPhase === "ready") && frame.op === "localeAck") {
     const pending = pendingLocaleAck;
     if (!pending || frame.locale !== pending.locale) {
-      failControl("Guest sent an unexpected or mismatched locale acknowledgement during startup");
+      failControl("Guest sent an unexpected or mismatched locale acknowledgement");
       return;
     }
-    if (localeTimer !== null) clearTimeout(localeTimer);
-    localeTimer = null;
+    clearLocaleAckTimer();
     appliedLocale = pending.locale;
     pendingLocaleAck = null;
-    advanceStartupSynchronization();
+    advanceControlSynchronization();
     return;
   }
   if (startupPhase === "syncing" && pendingLocaleAck
@@ -494,7 +493,7 @@ function handleControlFrame(frame: GuestControlFrame, sequence: number | null) {
     resizeTimer = null;
     appliedDimensions = resizeInFlight;
     resizeInFlight = null;
-    if (startupPhase === "syncing") advanceStartupSynchronization();
+    if (startupPhase === "syncing") advanceControlSynchronization();
     else sendDesiredResize();
   } else if (frame.op === "shellReady") {
     if (!guestReady || shellReady || frame.guestBuildId !== guestBuildId) {
@@ -725,8 +724,7 @@ function handleRequest(data: unknown) {
       return;
     }
     currentLocale = request.locale;
-    if (startupPhase === "syncing") advanceStartupSynchronization();
-    else if (startupPhase === "ready" && guestReady) sendControl({ op: "setLocale", locale: currentLocale });
+    if (startupPhase === "syncing" || startupPhase === "ready") advanceControlSynchronization();
   } else if (request.type === "dispatch-action") {
     failControl("Host quick actions remain disabled until genuine guest consumption and execution proof is available");
   } else if (request.type === "portfolio-ack") {
