@@ -60,15 +60,22 @@ export function extractCommandOutput(transcript, offset, commandText, markerComm
     .trim();
 }
 
-export function validateControlReadiness(ready, shellReady, expectedBuildId) {
+export function validateControlReadiness(ready, initialLocaleAck, shellReady, expectedBuildId) {
   if (typeof expectedBuildId !== "string" || !/^[a-f0-9]{64}$/.test(expectedBuildId)) {
     throw new Error("guest smoke requires the manifest-derived guest build ID");
   }
-  if (ready?.op !== "ready" || ready.guestBuildId !== expectedBuildId || ready.cols !== 80 || ready.rows !== 24) {
+  if (ready?.op !== "ready" || ready.seq !== 1 || !/^[0-9a-f]{32}$/.test(ready.sessionId ?? "")
+    || ready.guestBuildId !== expectedBuildId || ready.cols !== 80 || ready.rows !== 24) {
     throw new Error(`COM2 ready identity/size mismatch: ${JSON.stringify(ready)}`);
   }
-  if (shellReady?.op !== "shellReady" || shellReady.guestBuildId !== expectedBuildId) {
-    throw new Error(`COM2 shellReady identity mismatch: ${JSON.stringify(shellReady)}`);
+  if (initialLocaleAck?.op !== "localeAck" || initialLocaleAck.seq !== 2
+    || initialLocaleAck.sessionId !== ready.sessionId
+    || (initialLocaleAck.locale !== "en" && initialLocaleAck.locale !== "ru")) {
+    throw new Error(`COM2 initial locale acknowledgment mismatch: ${JSON.stringify(initialLocaleAck)}`);
+  }
+  if (shellReady?.op !== "shellReady" || !Number.isInteger(shellReady.seq) || shellReady.seq <= 2
+    || shellReady.sessionId !== ready.sessionId || shellReady.guestBuildId !== expectedBuildId) {
+    throw new Error(`COM2 shellReady identity/order mismatch: ${JSON.stringify(shellReady)}`);
   }
 }
 
@@ -120,19 +127,6 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
   emulator.add_listener("serial1-output-byte", controlListener);
 
   const output = () => decoder.decode(Uint8Array.from(serial));
-  const waitForGuestStartupSignal = async (timeout = timeoutMs) => {
-    const marker = "__GUEST_READY__";
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const text = output();
-      if (text.includes(marker)) {
-        const markerIndex = text.indexOf(marker);
-        return text.slice(Math.max(0, markerIndex - 100), markerIndex + marker.length + 100);
-      }
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-    throw new Error(`guest timed out waiting for ${marker}; serial output: ${output().slice(-4000)}`);
-  };
   const waitForText = async (textFragment, fromIndex, timeout = timeoutMs) => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -205,14 +199,26 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
     if (typeof expectedBuildId !== "string" || !/^[a-f0-9]{64}$/.test(expectedBuildId)) {
       throw new Error("guest smoke requires the manifest-derived guest build ID");
     }
-    const ready = await waitForGuestStartupSignal();
-    sendControl("hello", { cols: 80, rows: 24 });
+    const bootstrap = await waitForControl(frame => frame.op === "bootstrap", timeoutMs);
+    if (controlHistory[0] !== bootstrap || bootstrap.v !== 1 || bootstrap.guestBuildId !== expectedBuildId
+      || bootstrap.cols !== 80 || bootstrap.rows !== 24
+      || Object.keys(bootstrap).sort().join(",") !== "cols,guestBuildId,op,rows,v") {
+      throw new Error(`COM2 bootstrap identity, dimensions, or exact fields are invalid: ${JSON.stringify(bootstrap)}`);
+    }
+    sendControl("hello", { cols: bootstrap.cols, rows: bootstrap.rows });
     const controlReady = await waitForControl(frame => frame.op === "ready", timeoutMs);
-    const shellReady = await waitForControl(frame => frame.op === "shellReady", timeoutMs);
-    validateControlReadiness(controlReady, shellReady, expectedBuildId);
+    if (controlReady.seq !== 1 || controlReady.sessionId !== controlSessionId) {
+      throw new Error(`COM2 ready did not adopt the host's first session frame: ${JSON.stringify(controlReady)}`);
+    }
+    sendControl("setLocale", { locale: "en" });
+    const initialLocaleAck = await waitForControl(frame => frame.op === "localeAck" && frame.locale === "en");
+    if (initialLocaleAck.seq !== 2 || initialLocaleAck.sessionId !== controlSessionId) {
+      throw new Error(`COM2 initial locale ACK did not follow ready at guest seq 2: ${JSON.stringify(initialLocaleAck)}`);
+    }
+    validateControlReadiness(controlReady, initialLocaleAck, shellReady, expectedBuildId);
     const bootMs = Date.now() - start;
     await onShellReady({ bootMs, guestOutputBytes: serial.length });
-    assertions.push("com2-session-and-content-build-identity");
+    assertions.push("com2-sessionless-bootstrap-ready-locale-ack-shellReady-order");
 
     sendControl("resize", { cols: 100, rows: 40 });
     const resizeAck = await waitForControl(frame => frame.op === "resizeAck" && frame.cols === 100 && frame.rows === 40);
@@ -476,7 +482,6 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
         fenceRecovery: boundaryRecovery.slice(-500),
         escapeRecovery: escapeRecovery.slice(-500),
         controlRevokedCom1: revokedControl.slice(-500),
-        readyMarker: ready.slice(-500),
       },
     };
   } finally {

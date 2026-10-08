@@ -159,12 +159,16 @@ class Broker:
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
         signal.signal(signal.SIGWINCH, signal.SIG_IGN)
         self.session = None
+        self.bootstrapped = False
         self.parser = FrameParser()
         self.revoked = False
         self.host_seq = 1
         self.guest_seq = 1
         self.ready = False
+        self.initial_locale_acknowledged = False
         self.shell_ready = False
+        self.shell_ready_sent = False
+        self.pending_shell_state = None
         self.shell_state = "unknown"
         self.com1_input = 0
         self.com1_forwarded = 0
@@ -188,6 +192,7 @@ class Broker:
         os.set_blocking(self.pty_master, False)
         self.cols, self.rows = 80, 24
         self.resize(self.cols, self.rows)
+        self.send_bootstrap()
 
     def start_shell(self):
         signal.signal(signal.SIGWINCH, signal.SIG_DFL)
@@ -239,6 +244,21 @@ class Broker:
         set_winsize(self.pty_master, cols, rows)
         self.cols, self.rows = cols, rows
 
+
+    def send_bootstrap(self):
+        if self.com2 is None:
+            return
+        value = {
+            "v": 1,
+            "op": "bootstrap",
+            "guestBuildId": self.build_id,
+            "cols": self.cols,
+            "rows": self.rows,
+        }
+        encoded = encode_frame(value)
+        if len(self.com2_output) + len(encoded) > FIFO_LIMIT:
+            raise RuntimeError("COM2 output queue overflow")
+        self.com2_output.extend(encoded)
     def frame(self, op, **fields):
         if self.session is None or self.com2 is None:
             return None
@@ -306,8 +326,36 @@ class Broker:
             raise ValueError("bad sequence")
         return session, op
 
+    def send_startup_state(self):
+        if not self.ready or not self.initial_locale_acknowledged:
+            return
+        if self.shell_ready and not self.shell_ready_sent:
+            if self.frame("shellReady", guestBuildId=self.build_id) is not None:
+                self.shell_ready_sent = True
+        if self.pending_shell_state is not None:
+            state = self.pending_shell_state
+            self.pending_shell_state = None
+            self.frame("shellState", state=state)
+
+    def handle_bootstrap(self, value):
+        if self.bootstrapped or self.session is not None:
+            raise ValueError("repeated bootstrap")
+        if set(value) != {"v", "op", "guestBuildId", "cols", "rows"}:
+            raise ValueError("bad bootstrap fields")
+        if value["v"] != 1 or type(value["v"]) is not int or value["op"] != "bootstrap":
+            raise ValueError("bad bootstrap operation")
+        if value["guestBuildId"] != self.build_id:
+            raise ValueError("bad bootstrap build identity")
+        cols, rows = value["cols"], value["rows"]
+        if not int_field(cols, 2, 300) or not int_field(rows, 2, 120):
+            raise ValueError("bad bootstrap dimensions")
+        self.bootstrapped = True
+
     def handle_frame(self, value):
         if self.revoked:
+            return
+        if not self.bootstrapped:
+            self.handle_bootstrap(value)
             return
         if self.session is None:
             session, _ = self.validate_envelope(value, first=True)
@@ -319,14 +367,14 @@ class Broker:
             self.resize(cols, rows)
             self.ready = True
             self.frame("ready", guestBuildId=self.build_id, cols=cols, rows=rows)
-            if self.shell_ready:
-                self.frame("shellReady", guestBuildId=self.build_id)
             return
 
         _, op = self.validate_envelope(value)
         self.host_seq += 1
         if op == "hello":
             raise ValueError("repeated hello")
+        if not self.initial_locale_acknowledged and op != "setLocale":
+            raise ValueError("initial locale acknowledgement required")
         if op == "resize":
             if set(value) != {"v", "sessionId", "seq", "op", "cols", "rows"}:
                 raise ValueError("bad resize fields")
@@ -340,6 +388,9 @@ class Broker:
                 raise ValueError("bad locale request")
             self.set_locale(value["locale"])
             self.frame("localeAck", locale=value["locale"])
+            if not self.initial_locale_acknowledged:
+                self.initial_locale_acknowledged = True
+                self.send_startup_state()
         elif op == "inputFence":
             if set(value) != {"v", "sessionId", "seq", "op", "fenceId", "inputBytes"}:
                 raise ValueError("bad fence fields")
@@ -423,15 +474,15 @@ class Broker:
         if message == "shellReady":
             if not self.shell_ready:
                 self.shell_ready = True
-                if self.ready:
-                    self.frame("shellReady", guestBuildId=self.build_id)
+                self.send_startup_state()
         elif message.startswith("state:"):
             state = message[6:]
             if state in STATES:
                 self.shell_state = state
-                if self.ready:
+                if self.ready and self.initial_locale_acknowledged:
                     self.frame("shellState", state=state)
-
+                elif self.ready:
+                    self.pending_shell_state = state
     def read_fifo(self):
         try:
             data = os.read(self.fifo_in, 4096)

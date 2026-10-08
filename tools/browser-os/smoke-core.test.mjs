@@ -2,37 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { extractCommandOutput, findCommandOutputMarker, findStandaloneMarker, validateControlReadiness } from "./smoke-core.mjs";
 
-test("COM2 identity and shellReady, not a serial marker, establish startup readiness", () => {
+test("typed readiness requires guest seq 1, matching locale ACK seq 2, then shellReady", () => {
   const guestBuildId = "f".repeat(64);
-  validateControlReadiness(
-    { op: "ready", guestBuildId, cols: 80, rows: 24 },
-    { op: "shellReady", guestBuildId },
-    guestBuildId,
-  );
+  const sessionId = "b".repeat(32);
+  const ready = { op: "ready", guestBuildId, cols: 80, rows: 24, seq: 1, sessionId };
+  const localeAck = { op: "localeAck", locale: "en", seq: 2, sessionId };
+  const shellReady = { op: "shellReady", guestBuildId, seq: 3, sessionId };
+  validateControlReadiness(ready, localeAck, shellReady, guestBuildId);
 
   assert.throws(
-    () => validateControlReadiness(
-      { op: "ready", guestBuildId: "e".repeat(64), cols: 80, rows: 24 },
-      { op: "shellReady", guestBuildId },
-      guestBuildId,
-    ),
+    () => validateControlReadiness({ ...ready, seq: 2 }, localeAck, shellReady, guestBuildId),
     /COM2 ready identity\/size mismatch/,
   );
   assert.throws(
-    () => validateControlReadiness(
-      { op: "ready", guestBuildId, cols: 80, rows: 24 },
-      { op: "shellReady", guestBuildId: "e".repeat(64) },
-      guestBuildId,
-    ),
-    /COM2 shellReady identity mismatch/,
+    () => validateControlReadiness(ready, { ...localeAck, seq: 3 }, shellReady, guestBuildId),
+    /COM2 initial locale acknowledgment mismatch/,
   );
   assert.throws(
-    () => validateControlReadiness(
-      { op: "ready", guestBuildId, cols: 1, rows: 24 },
-      { op: "shellReady", guestBuildId },
-      guestBuildId,
-    ),
-    /COM2 ready identity\/size mismatch/,
+    () => validateControlReadiness(ready, { ...localeAck, sessionId: "c".repeat(32) }, shellReady, guestBuildId),
+    /COM2 initial locale acknowledgment mismatch/,
+  );
+  assert.throws(
+    () => validateControlReadiness(ready, localeAck, { ...shellReady, seq: 2 }, guestBuildId),
+    /COM2 shellReady identity\/order mismatch/,
+  );
+  assert.throws(
+    () => validateControlReadiness(ready, localeAck, { ...shellReady, guestBuildId: "e".repeat(64) }, guestBuildId),
+    /COM2 shellReady identity\/order mismatch/,
   );
 });
 test("an echoed result command cannot satisfy the result marker", () => {

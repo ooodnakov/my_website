@@ -13,12 +13,13 @@ Status: guest/host v1 wire contract. COM2 is separate from the xterm byte stream
 
 ## Session and operation schemas
 
-The table lists the complete key set for each operation: the four envelope keys plus the named operation fields. No optional or extension keys are accepted. Guest output is forbidden before a valid first host `hello`; guest `ready` is its first frame. The host sends no operation until it has validated `ready` and its build identity.
+The table lists the complete key set for each operation: session-bound frames have the four envelope keys plus the named operation fields; the first guest `bootstrap` is intentionally sessionless and has only its five listed keys. The guest emits exactly one bootstrap after opening/configuring both raw UARTs and verifying its embedded descriptor. The host validates that identity against the pinned manifest and responds with `hello` at host seq 1. The guest adopts that session and emits `ready` as guest seq 1 after applying the validated hello dimensions. The host sends `setLocale` at host seq 2; the guest's matching `localeAck` must be guest seq 2. No advisory or shell-state frames may precede that ACK. `shellReady` is independent and may follow it later.
 
 | Direction | `op` | Exact operation fields and bounds | Meaning |
 |---|---|---|---|
-| host → guest | `hello` | `cols` integer 2–300; `rows` integer 2–120 | First frame, `seq:1`; establishes this session and its initial terminal size. |
-| guest → host | `ready` | `guestBuildId` lowercase 64-hex SHA-256; `cols`, `rows` as above | First guest frame; proves the broker verified its embedded build descriptor and applied both tty sizes. Does not mean zsh is ready or idle. |
+| guest → host | `bootstrap` | Sessionless; exact keys `v`, `op`, `guestBuildId`, `cols`, `rows`; `v:1`, build ID lowercase 64-hex SHA-256, dimensions 2–300 cols / 2–120 rows | Exactly one first guest frame, sent only after raw/configured UARTs and embedded descriptor verification; no session or sequence. |
+| host → guest | `hello` | `cols` integer 2–300; `rows` integer 2–120 | First session-bound host frame, `seq:1`; establishes the host session and initial terminal size. |
+| guest → host | `ready` | `guestBuildId` lowercase 64-hex SHA-256; `cols`, `rows` as above | First session-bound guest frame, `seq:1`; proves the broker adopted the host session, verified its embedded build descriptor, and applied both tty sizes. Does not mean zsh is ready or idle. |
 | guest → host | `shellReady` | `guestBuildId` as above | Visitor zsh startup hook completed. Does not imply an active or clean prompt. |
 | guest → host | `shellState` | `state`: `cleanPrompt`, `editing`, `busy`, or `unknown` | Advisory snapshot only; never grants dispatch authority. |
 | host → guest | `resize` | `cols` integer 2–300; `rows` integer 2–120 | Set `TIOCSWINSZ` on ttyS0 and the controlling PTY; the PTY kernel delivers `SIGWINCH` to its foreground process group. |
@@ -53,7 +54,7 @@ For `portfolioAction`, host `queued` means only that the request entered the hos
 
 ## Startup, state, locale, and terminal size
 
-`emulator-ready` means only that v86 initialized. Guest `ready` means only that descriptor verification, COM2 initialization, and both initial size ioctls succeeded. `shellReady` is a separate startup signal. The host must not infer readiness or prompt state from terminal output, text markers, a prompt string, or COM1. `shellState` is advisory and never substitutes for a matching clean `inputFenceAck`.
+`emulator-ready` means only that v86 initialized. The guest bootstrap proves only that its UARTs are raw/configured and its embedded descriptor has been verified; it carries no session. Host `hello` at seq 1 establishes the session and requests validated initial dimensions. Guest `ready` at seq 1 proves those dimensions were applied to ttyS0 and the controlling PTY. The host then sends its selected initial locale at seq 2; the guest must acknowledge that exact locale at guest seq 2 before emitting any advisory `shellState` or startup `shellReady`. `shellReady` remains a separate startup signal and does not imply an active or clean prompt. Never infer readiness or prompt state from terminal output, text markers, a prompt string, or COM1. `shellState` is advisory and never substitutes for a matching clean `inputFenceAck`.
 
 The root-owned broker starts the visitor as a nonroot login zsh on a controlling PTY; ttyS0 remains raw transport. It validates every dimension before calling `TIOCSWINSZ` for both ttyS0 and the PTY; resizing the PTY produces `SIGWINCH` for the foreground process group. Guest locale selection changes only the root-managed `/portfolio/current` view, never writable home or generated files. The same `setLocale` operation is used by the host and the fixed `set-locale en|ru` wrapper, backed by `guestctl locale`.
 
@@ -63,6 +64,6 @@ Before `fs.json` is generated, the build emits canonical UTF-8 JSON with a trail
 
 ## Revocation and byte-stream isolation
 
-The guest accepts one `hello` per new session. Repeated hello, wrong session, any malformed/oversized/stale/out-of-order frame, or operation in the wrong direction sends a bounded `error` where possible, revokes all pending requests/fences, returns held COM1 input in order, and requires a fresh Worker/session. Never resynchronize within an invalid stream. A revoked COM2 channel has no authority to dispatch, resize, or change locale.
+The guest accepts one sessionless `bootstrap`, then exactly one host `hello` per fresh session. Repeated bootstrap/hello, wrong session, any malformed/oversized/stale/out-of-order frame, or operation in the wrong direction sends a bounded `error` where possible, revokes all pending requests/fences, returns held COM1 input in order, and requires a fresh Worker/session. Never resynchronize within an invalid stream. A revoked COM2 channel has no authority to dispatch, resize, or change locale.
 
 COM1 remains the native xterm byte stream: input is raw byte data and output is the tty/PTY byte stream. Preserve terminal echo, editing, UTF-8, foreground programs, `ISIG`, Ctrl+C, and reset. COM2 is never forwarded to COM1, PTY input, a shell command, or terminal output.

@@ -146,15 +146,119 @@ class SequenceBoundaryTests(unittest.TestCase):
             })
 
 
+class BootHandshakeTests(unittest.TestCase):
+    def make_broker(self):
+        broker = BROKER.Broker.__new__(BROKER.Broker)
+        broker.build_id = "a" * 64
+        broker.session = None
+        broker.bootstrapped = False
+        broker.revoked = False
+        broker.host_seq = 1
+        broker.guest_seq = 1
+        broker.ready = False
+        broker.initial_locale_acknowledged = False
+        broker.shell_ready = True
+        broker.shell_ready_sent = False
+        broker.pending_shell_state = "busy"
+        broker.shell_state = "busy"
+        broker.frames = []
+
+        def record_frame(operation, **fields):
+            sequence = broker.guest_seq
+            broker.frames.append({
+                "v": 1, "sessionId": broker.session, "seq": sequence,
+                "op": operation, **fields,
+            })
+            broker.guest_seq += 1
+            return sequence
+        broker.frame = record_frame
+        broker.resize = lambda cols, rows: setattr(broker, "dimensions", (cols, rows))
+        broker.set_locale = lambda locale: setattr(broker, "locale", locale)
+        return broker
+
+    def test_bootstrap_then_host_session_and_locale_ack_gate_startup_frames(self):
+        broker = self.make_broker()
+        bootstrap = {
+            "v": 1, "op": "bootstrap", "guestBuildId": broker.build_id,
+            "cols": 80, "rows": 24,
+        }
+        broker.handle_frame(bootstrap)
+        self.assertTrue(broker.bootstrapped)
+        self.assertEqual(broker.frames, [])
+
+        broker.handle_frame({
+            "v": 1, "sessionId": "b" * 32, "seq": 1, "op": "hello",
+            "cols": 100, "rows": 40,
+        })
+        self.assertEqual(broker.frames, [{
+            "v": 1, "sessionId": "b" * 32, "seq": 1, "op": "ready",
+            "guestBuildId": broker.build_id, "cols": 100, "rows": 40,
+        }])
+        self.assertEqual(broker.dimensions, (100, 40))
+        self.assertFalse(broker.initial_locale_acknowledged)
+
+        broker.handle_frame({
+            "v": 1, "sessionId": "b" * 32, "seq": 2, "op": "setLocale",
+            "locale": "ru",
+        })
+        self.assertEqual([frame["op"] for frame in broker.frames], [
+            "ready", "localeAck", "shellReady", "shellState",
+        ])
+        self.assertEqual([frame["seq"] for frame in broker.frames], [1, 2, 3, 4])
+        self.assertEqual(broker.frames[1]["locale"], "ru")
+        self.assertEqual(broker.frames[2]["guestBuildId"], broker.build_id)
+        self.assertEqual(broker.frames[3]["state"], "busy")
+        self.assertTrue(broker.initial_locale_acknowledged)
+
+        broker.handle_frame({
+            "v": 1, "sessionId": "b" * 32, "seq": 3, "op": "setLocale",
+            "locale": "en",
+        })
+        self.assertEqual(sum(frame["op"] == "shellReady" for frame in broker.frames), 1)
+        self.assertEqual(
+            (broker.frames[-1]["op"], broker.frames[-1]["locale"], broker.frames[-1]["seq"]),
+            ("localeAck", "en", 5),
+        )
+
+    def test_malformed_bootstrap_and_pre_bootstrap_hello_are_rejected(self):
+        for first in (
+            {"v": 1, "op": "hello", "sessionId": "b" * 32, "seq": 1, "cols": 80, "rows": 24},
+            {"v": 1, "op": "bootstrap", "guestBuildId": "c" * 64, "cols": 80, "rows": 24},
+            {"v": 1, "op": "bootstrap", "guestBuildId": "a" * 64, "cols": True, "rows": 24},
+            {"v": 1, "op": "bootstrap", "guestBuildId": "a" * 64, "cols": 80, "rows": 24, "extra": 1},
+        ):
+            broker = self.make_broker()
+            with self.subTest(first=first), self.assertRaises(ValueError):
+                broker.handle_frame(first)
+
+    def test_resize_is_rejected_before_initial_locale_ack(self):
+        broker = self.make_broker()
+        broker.handle_frame({
+            "v": 1, "op": "bootstrap", "guestBuildId": broker.build_id,
+            "cols": 80, "rows": 24,
+        })
+        broker.handle_frame({
+            "v": 1, "sessionId": "b" * 32, "seq": 1, "op": "hello",
+            "cols": 80, "rows": 24,
+        })
+        with self.assertRaisesRegex(ValueError, "initial locale acknowledgement required"):
+            broker.handle_frame({
+                "v": 1, "sessionId": "b" * 32, "seq": 2, "op": "resize",
+                "cols": 100, "rows": 40,
+            })
+
 class PortfolioActionTests(unittest.TestCase):
     def test_portfolio_actions_use_monotonic_request_ids_and_typed_ack(self):
         broker = BROKER.Broker.__new__(BROKER.Broker)
         broker.revoked = False
+        broker.bootstrapped = True
         broker.session = "a" * 32
         broker.com2 = object()
         broker.guest_seq = 1
         broker.com2_output = bytearray()
         broker.ready = True
+        broker.initial_locale_acknowledged = True
+        broker.host_seq = 2
         broker.pending_cli = None
         broker.last_portfolio_request_id = 0
         broker.link_ids = {"quick-cv"}
