@@ -533,6 +533,29 @@ const moduleObjectProtocol = protocolExports.exports as Record<string, unknown>;
     "the host does not send locale before the required ready frame");
   harness.dispose();
 }
+{
+  const harness = createHarness();
+  await harness.start();
+  const hello = harness.startProtocol();
+  const sessionId = String(hello.sessionId);
+  harness.injectGuestFrame(sessionId, 1, {
+    op: "ready",
+    guestBuildId: harness.manifest.guest.buildId,
+    cols: hello.cols,
+    rows: hello.rows,
+  });
+  harness.injectGuestFrame(sessionId, 2, { op: "shellState", state: "cleanPrompt" });
+  assert.equal(harness.messages.some((entry) => entry.type === "control-error"), true,
+    "an advisory shell state cannot replace the required sequence-two initial locale ACK");
+  assert.deepEqual(
+    FakeV86.instances[0]!.sentControlFrames.map(framePayload).map((frame) => frame.op),
+    ["hello", "setLocale"],
+    "a rejected initial locale handshake cannot send follow-up controls",
+  );
+  assert.equal(harness.messages.some((entry) => entry.type === "control-ready"), false);
+  harness.dispose();
+}
+
 
 {
   const harness = createHarness({ omit: ["v86/v86-fallback.wasm"] });

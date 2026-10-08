@@ -344,4 +344,3 @@ export class Com2Decoder {
     this.buffer.copyWithin(0, count, count + this.length);
   }
 }
-
