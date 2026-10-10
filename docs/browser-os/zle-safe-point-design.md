@@ -36,7 +36,15 @@ Even after a clean safe-point ACK, the broker must recheck the same one-use sess
 
 The C notification is not itself permission to act. It must not enqueue characters into `BUFFER`, call `ungetbyte()`, inject a marker, invoke a widget, or bypass the fixed `dispatchAction` allowlist. Quick actions remain disabled until the complete patch, broker bridge, exact frame race behavior, and tests below pass review.
 
-## Patch staging after explicit approval
+## Bounded prototype result
+
+The pinned 5.9 source trace confirms the current design is not yet a proof. `getbyte()` returns a byte value and `ungetbyte()` stores only that value in `kungetbuf`; no raw input ordinal follows a byte through pushback. `getkeymapcmd()` accumulates `keybuf`, accepts the last matching binding, and passes any read-ahead suffix back through `ungetbytes()`. `getrestchar()` may perform additional reads while resolving multibyte input. Therefore a count at `getbyte()` cannot prove the fence's raw-byte target reached the completed widget; the source has no provenance to report.
+
+`zlecore()`'s post-widget loop boundary remains the candidate safe point, but no generation/watermark channel exists and the broker cannot presently use it. `browser-osd` currently ACKs a fence as `unknown` after byte counts reach the target and rejects every `dispatchAction`. No atomic fixed-ID executor currently hands control from ZLE to a fixed action while preserving the controlling PTY's job-control semantics.
+
+Stop condition for this bounded attempt: do not claim a safe point, add a guessed byte counter, inject command text, or enable dispatch. The smallest remaining design decision is the zsh-owned fixed-ID launch path and its job-control/ACK boundary; it must run without command-string injection and leave Ctrl+C/reset native. After that interface is fixed, the provenance change must carry ordinals through `getbyte`, multibyte completion, `keybuf`, and every `ungetbyte(s)` path before a patch can be built and raced against live guest input.
+
+## Patch staging after executor-boundary decision
 
 1. Keep the source change small and local to the pinned zsh 5.9 package patch series. Add a core safe-point predicate/event at the `zlecore()` loop boundary and explicit tracking for incomplete key-sequence / multibyte resolution; do not add a general widget executor or shell command interface.
 2. Add the broker-side fixed-record reader and generation/watermark matching. Keep all COM2 parsing, action allowlisting, FIFO release, deadline, and Ctrl+C behavior in `browser-osd`.
