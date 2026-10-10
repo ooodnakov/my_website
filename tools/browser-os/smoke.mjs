@@ -2,17 +2,31 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 import { runGuestSmoke } from "./smoke-core.mjs";
 import { pipeTrackedResponse } from "./smoke-http.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const protocolCodecPath = process.env.BROWSER_OS_COM2_CODEC
+  ? path.resolve(process.env.BROWSER_OS_COM2_CODEC)
+  : null;
+const protocolCodec = protocolCodecPath === null
+  ? null
+  : await import(pathToFileURL(protocolCodecPath).href);
+const protocolCodecSha256 = protocolCodecPath === null
+  ? null
+  : createHash("sha256").update(await fs.readFile(protocolCodecPath)).digest("hex");
 const defaultAssets = path.resolve(here, "../../apps/main/client/public/browser-os/alpine-3.24.2-v86-0.5.469");
 const args = process.argv.slice(2);
 const assetArgument = args.find(argument => !argument.startsWith("--"));
 const assetRoot = path.resolve(assetArgument ?? defaultAssets);
 const manifest = JSON.parse(await fs.readFile(path.join(assetRoot, "manifest.json"), "utf8"));
+if (manifest.guest?.buildIdentityPath !== "alpine/guest-build.json" ||
+    !/^[a-f0-9]{64}$/.test(manifest.guest?.buildId ?? "") ||
+    manifest.assets?.[manifest.guest.buildIdentityPath]?.sha256 !== manifest.guest.buildId) {
+  throw new Error("manifest guest build identity does not match its descriptor asset");
+}
 
 async function verifyAssets() {
   let runtimeBytes = 0;
@@ -76,7 +90,7 @@ async function runNode() {
   const bootStartedAt = Date.now();
   const emulator = new V86(baseOptions(nodeAssets));
   try {
-    const result = await runGuestSmoke(emulator, bootStartedAt);
+    const result = await runGuestSmoke(emulator, bootStartedAt, undefined, undefined, manifest.guest.buildId, protocolCodec);
     return { ...result, localAssetBytes: manifestRuntimeBytes };
   } finally {
     await emulator.destroy().catch(() => {});
@@ -203,7 +217,7 @@ async function runBrowser() {
         log_level: 0,
       });
       try {
-        return await runGuestSmoke(emulator, startedAt, undefined, () => window.__recordShellReady());
+        return await runGuestSmoke(emulator, startedAt, undefined, () => window.__recordShellReady(), config.guest.buildId);
       } finally {
         await emulator.destroy().catch(() => {});
       }
@@ -242,5 +256,10 @@ const report = {
   transferBytesFromManifest: manifestRuntimeBytes,
   node: runNodeMode ? await runNode() : undefined,
   browser: runBrowserMode ? await runBrowser() : undefined,
+  websiteCodec: protocolCodecPath === null ? null : {
+    path: path.basename(protocolCodecPath),
+    sha256: protocolCodecSha256,
+    usedBy: runNodeMode ? "node" : "not-used",
+  },
 };
 console.log(JSON.stringify(report, null, 2));

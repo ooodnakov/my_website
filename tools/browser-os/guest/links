@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+jq -r '.[] | [.id, .label, .target] | @tsv' /portfolio/current/links.json

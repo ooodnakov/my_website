@@ -1,0 +1,703 @@
+#!/usr/bin/python3
+"""Root-owned COM1/COM2 broker for the disposable Browser OS guest."""
+
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import pty
+import pwd
+import signal
+import socket
+import struct
+import select
+import termios
+import time
+import tty
+
+COM1 = "/dev/ttyS0"
+COM2 = "/dev/ttyS1"
+BUILD_IDENTITY = "/etc/browser-os/guest-build.json"
+SOCKET_PATH = "/run/browser-os/guestctl.sock"
+SHELL_OUT = "/run/browser-os/shell-out"
+FIFO_LIMIT = 65536
+FRAME_LIMIT = 4096
+MAX_INT = 2147483647
+ACTIONS = {"tour", "plugins", "links", "projects", "contact", "github", "a", "ls", "eza", "clear"}
+STATES = {"cleanPrompt", "editing", "busy", "unknown"}
+ERRORS = {"badFrame", "badSession", "badSequence", "badOperation", "badValue", "internal"}
+
+
+def reject_constant(_value):
+    raise ValueError("non-JSON constant")
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+class FrameParser:
+    def __init__(self):
+        self.buffer = bytearray()
+
+    def feed(self, data):
+        frames = []
+        offset = 0
+        while offset < len(data) or len(self.buffer) >= 6:
+            if len(self.buffer) < 6:
+                amount = min(6 - len(self.buffer), len(data) - offset)
+                self.buffer.extend(data[offset:offset + amount])
+                offset += amount
+                if len(self.buffer) < 6:
+                    break
+            if self.buffer[:4] != b"BOS1":
+                raise ValueError("bad frame magic")
+            length = struct.unpack(">H", self.buffer[4:6])[0]
+            if length < 1 or length > FRAME_LIMIT:
+                raise ValueError("bad frame length")
+            total = 6 + length
+            amount = min(total - len(self.buffer), len(data) - offset)
+            if amount:
+                self.buffer.extend(data[offset:offset + amount])
+                offset += amount
+            if len(self.buffer) < total:
+                break
+            payload = bytes(self.buffer[6:total])
+            del self.buffer[:total]
+            value = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=unique_object, parse_constant=reject_constant)
+            if type(value) is not dict or any(type(item) in (dict, list) for item in value.values()):
+                raise ValueError("frame must be a flat object")
+            frames.append(value)
+        return frames
+
+
+def encode_frame(value):
+    payload = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if not payload or len(payload) > FRAME_LIMIT:
+        raise ValueError("outgoing frame size")
+    return b"BOS1" + struct.pack(">H", len(payload)) + payload
+
+
+def int_field(value, minimum, maximum):
+    return type(value) is int and minimum <= value <= maximum
+
+
+def enum_field(value, values):
+    return type(value) is str and value in values
+
+
+def set_raw_115200(fd):
+    tty.setraw(fd, termios.TCSANOW)
+    attrs = termios.tcgetattr(fd)
+    attrs[2] |= termios.CLOCAL | termios.CREAD | termios.CS8
+    attrs[2] &= ~(termios.PARENB | termios.CSTOPB | termios.CSIZE)
+    attrs[2] |= termios.CS8
+    if hasattr(termios, "CRTSCTS"):
+        attrs[2] &= ~termios.CRTSCTS
+    attrs[4] = termios.B115200
+    attrs[5] = termios.B115200
+    attrs[6][termios.VMIN] = 1
+    attrs[6][termios.VTIME] = 0
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+
+
+def set_winsize(fd, cols, rows):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    actual_rows, actual_cols, _, _ = struct.unpack("HHHH", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8))
+    if (actual_cols, actual_rows) != (cols, rows):
+        raise OSError("terminal size verification failed")
+
+
+def load_guest_build_id():
+    with open(BUILD_IDENTITY, "rb") as descriptor:
+        content = descriptor.read(1024 * 1024 + 1)
+    if len(content) > 1024 * 1024:
+        raise RuntimeError("guest build identity too large")
+    value = json.loads(content.decode("utf-8", "strict"), object_pairs_hook=unique_object)
+    if type(value) is not dict or set(value) != {"format", "inputs", "schemaVersion"}:
+        raise RuntimeError("invalid guest build identity")
+    if type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1 or value["format"] != "browser-os-guest-build-identity/v1" or type(value["inputs"]) is not dict:
+        raise RuntimeError("invalid guest build identity")
+    return hashlib.sha256(content).hexdigest()
+
+def load_portfolio_ids():
+    with open("/portfolio/portfolio-link-ids.json", "rb") as source:
+        data = source.read(4097)
+    if len(data) > 4096:
+        raise RuntimeError("portfolio action ID list too large")
+    ids = json.loads(data.decode("utf-8", "strict"))
+    if type(ids) is not list or len(ids) != 25 or any(type(item) is not str or not item.isascii() for item in ids):
+        raise RuntimeError("invalid portfolio action ID list")
+    if len(set(ids)) != len(ids) or "quick-mail" not in ids:
+        raise RuntimeError("invalid portfolio action ID list")
+    if any(not item or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in item) for item in ids):
+        raise RuntimeError("invalid portfolio action ID list")
+    return frozenset(ids)
+
+
+class Broker:
+    def __init__(self):
+        if os.geteuid() != 0:
+            raise RuntimeError("browser-osd must run as root")
+        self.build_id = load_guest_build_id()
+        self.link_ids = load_portfolio_ids()
+        self.visitor = pwd.getpwnam("visitor")
+        self.com1 = os.open(COM1, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        set_raw_115200(self.com1)
+        self.com2 = None
+        try:
+            self.com2 = os.open(COM2, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            set_raw_115200(self.com2)
+        except OSError:
+            self.com2 = None
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+        signal.signal(signal.SIGWINCH, signal.SIG_IGN)
+        self.session = None
+        self.bootstrapped = False
+        self.bootstrap_bytes_remaining = None
+        self.parser = FrameParser()
+        self.revoked = False
+        self.host_seq = 1
+        self.guest_seq = 1
+        self.ready = False
+        self.initial_locale_acknowledged = False
+        self.shell_ready = False
+        self.shell_ready_sent = False
+        self.pending_shell_state = None
+        self.shell_state = "unknown"
+        self.com1_input = 0
+        self.com1_forwarded = 0
+        self.input_queue = bytearray()
+        self.gated_input = bytearray()
+        self.fence = None
+        self.last_fence_id = 0
+        self.last_request_id = 0
+        self.last_portfolio_request_id = 0
+        self.com1_output = bytearray()
+        self.com2_output = bytearray()
+        self.pending_cli = None
+        self.cli_clients = {}
+        self.fifo_in = None
+        self.fifo_buffer = bytearray()
+        self.create_local_endpoints()
+        self.server = self.create_server()
+        self.shell_pid, self.pty_master = pty.fork()
+        if self.shell_pid == 0:
+            self.start_shell()
+        os.set_blocking(self.pty_master, False)
+        self.cols, self.rows = 80, 24
+        self.resize(self.cols, self.rows)
+        self.send_bootstrap()
+
+    def start_shell(self):
+        signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        os.closerange(3, min(os.sysconf("SC_OPEN_MAX"), 65536))
+        os.initgroups(self.visitor.pw_name, self.visitor.pw_gid)
+        os.setgid(self.visitor.pw_gid)
+        os.setuid(self.visitor.pw_uid)
+        os.chdir(self.visitor.pw_dir)
+        os.environ.update({
+            "HOME": self.visitor.pw_dir,
+            "USER": self.visitor.pw_name,
+            "LOGNAME": self.visitor.pw_name,
+            "SHELL": "/bin/zsh",
+            "TERM": "xterm-256color",
+            "LANG": "C.UTF-8",
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+        })
+        os.execv("/bin/zsh", ["zsh", "-l"])
+
+    def create_local_endpoints(self):
+        os.makedirs("/run/browser-os", mode=0o750, exist_ok=True)
+        os.chown("/run/browser-os", 0, self.visitor.pw_gid)
+        os.chmod("/run/browser-os", 0o750)
+        try:
+            os.unlink(SHELL_OUT)
+        except FileNotFoundError:
+            pass
+        os.mkfifo(SHELL_OUT, 0o620)
+        os.chown(SHELL_OUT, 0, self.visitor.pw_gid)
+        os.chmod(SHELL_OUT, 0o620)
+        self.fifo_in = os.open(SHELL_OUT, os.O_RDWR | os.O_NONBLOCK)
+
+    def create_server(self):
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(SOCKET_PATH)
+        os.chown(SOCKET_PATH, 0, self.visitor.pw_gid)
+        os.chmod(SOCKET_PATH, 0o660)
+        server.listen(8)
+        server.setblocking(False)
+        return server
+
+    def resize(self, cols, rows):
+        set_winsize(self.com1, cols, rows)
+        set_winsize(self.pty_master, cols, rows)
+        self.cols, self.rows = cols, rows
+
+
+    def send_bootstrap(self):
+        if self.com2 is None:
+            return
+        if self.bootstrapped or self.bootstrap_bytes_remaining is not None:
+            raise RuntimeError("COM2 bootstrap was already emitted")
+        value = {
+            "v": 1,
+            "op": "bootstrap",
+            "guestBuildId": self.build_id,
+            "cols": self.cols,
+            "rows": self.rows,
+        }
+        encoded = encode_frame(value)
+        if len(self.com2_output) + len(encoded) > FIFO_LIMIT:
+            raise RuntimeError("COM2 output queue overflow")
+        self.com2_output.extend(encoded)
+        self.bootstrap_bytes_remaining = len(encoded)
+
+    def frame(self, op, **fields):
+        if self.session is None or self.com2 is None:
+            return None
+        if self.guest_seq > MAX_INT:
+            self.revoke()
+            return None
+        value = {"v": 1, "sessionId": self.session, "seq": self.guest_seq, "op": op, **fields}
+        encoded = encode_frame(value)
+        if len(self.com2_output) + len(encoded) > FIFO_LIMIT:
+            raise RuntimeError("COM2 output queue overflow")
+        self.com2_output.extend(encoded)
+        self.guest_seq += 1
+        return value["seq"]
+
+    def error(self, code):
+        if code not in ERRORS:
+            code = "internal"
+        if self.session is not None:
+            try:
+                self.frame("error", code=code)
+            except Exception:
+                pass
+        self.revoke()
+
+    def revoke(self):
+        self.revoked = True
+        self.abort_fence()
+        self.session = None
+        self.ready = False
+        self.host_seq = 1
+        self.guest_seq = 1
+        if self.pending_cli is not None:
+            client, _, _ = self.pending_cli
+            self.reply(client, "error control-unavailable")
+            self.pending_cli = None
+
+    def abort_fence(self):
+        if self.fence is not None:
+            self.fence = None
+            if self.gated_input:
+                self.input_queue.extend(self.gated_input)
+                self.gated_input.clear()
+
+    def validate_envelope(self, value, first=False):
+        base = {"v", "sessionId", "seq", "op"}
+        if set(value) - base - {"cols", "rows", "locale", "fenceId", "inputBytes", "action", "requestId", "ackSeq", "status"}:
+            raise ValueError("unknown frame key")
+        if value.get("v") != 1 or type(value.get("v")) is not int:
+            raise ValueError("bad version")
+        session = value.get("sessionId")
+        if type(session) is not str or len(session) != 32 or any(char not in "0123456789abcdef" for char in session):
+            raise ValueError("bad session ID")
+        if not int_field(value.get("seq"), 1, MAX_INT):
+            raise ValueError("bad sequence")
+        op = value.get("op")
+        if type(op) is not str:
+            raise ValueError("bad operation")
+        if first:
+            if set(value) != base | {"cols", "rows"} or op != "hello" or value["seq"] != 1:
+                raise ValueError("expected first hello")
+            return session, op
+        if session != self.session:
+            raise ValueError("bad session")
+        if value["seq"] != self.host_seq:
+            raise ValueError("bad sequence")
+        return session, op
+
+    def send_startup_state(self):
+        if not self.ready or not self.initial_locale_acknowledged:
+            return
+        if self.shell_ready and not self.shell_ready_sent:
+            if self.frame("shellReady", guestBuildId=self.build_id) is not None:
+                self.shell_ready_sent = True
+        if self.pending_shell_state is not None:
+            state = self.pending_shell_state
+            self.pending_shell_state = None
+            self.frame("shellState", state=state)
+
+
+    def handle_frame(self, value):
+        if self.revoked:
+            return
+        if not self.bootstrapped:
+            raise ValueError("host frame arrived before guest bootstrap")
+        if self.session is None:
+            session, _ = self.validate_envelope(value, first=True)
+            self.session = session
+            self.host_seq = 2
+            cols, rows = value["cols"], value["rows"]
+            if not int_field(cols, 2, 300) or not int_field(rows, 2, 120):
+                raise ValueError("bad terminal dimensions")
+            self.resize(cols, rows)
+            self.ready = True
+            self.frame("ready", guestBuildId=self.build_id, cols=cols, rows=rows)
+            return
+
+        _, op = self.validate_envelope(value)
+        self.host_seq += 1
+        if op == "hello":
+            raise ValueError("repeated hello")
+        if not self.initial_locale_acknowledged and op != "setLocale":
+            raise ValueError("initial locale acknowledgement required")
+        if op == "resize":
+            if set(value) != {"v", "sessionId", "seq", "op", "cols", "rows"}:
+                raise ValueError("bad resize fields")
+            cols, rows = value["cols"], value["rows"]
+            if not int_field(cols, 2, 300) or not int_field(rows, 2, 120):
+                raise ValueError("bad terminal dimensions")
+            self.resize(cols, rows)
+            self.frame("resizeAck", cols=cols, rows=rows)
+        elif op == "setLocale":
+            if set(value) != {"v", "sessionId", "seq", "op", "locale"} or not enum_field(value["locale"], {"en", "ru"}):
+                raise ValueError("bad locale request")
+            self.set_locale(value["locale"])
+            self.frame("localeAck", locale=value["locale"])
+            if not self.initial_locale_acknowledged:
+                self.initial_locale_acknowledged = True
+                self.send_startup_state()
+        elif op == "inputFence":
+            if set(value) != {"v", "sessionId", "seq", "op", "fenceId", "inputBytes"}:
+                raise ValueError("bad fence fields")
+            fence_id, target = value["fenceId"], value["inputBytes"]
+            if not int_field(fence_id, 1, MAX_INT) or not int_field(target, 0, MAX_INT) or fence_id <= self.last_fence_id or self.fence is not None:
+                raise ValueError("stale or concurrent fence")
+            self.last_fence_id = fence_id
+            self.fence = {"id": fence_id, "target": target, "deadline": time.monotonic() + 1.0}
+            self.try_fence()
+        elif op == "dispatchAction":
+            expected = {"v", "sessionId", "seq", "op", "action", "requestId", "fenceId", "inputBytes"}
+            if set(value) != expected or not enum_field(value["action"], ACTIONS):
+                raise ValueError("bad dispatch fields")
+            request_id, fence_id, byte_count = value["requestId"], value["fenceId"], value["inputBytes"]
+            if not int_field(request_id, 1, MAX_INT) or request_id <= self.last_request_id:
+                raise ValueError("stale request ID")
+            self.last_request_id = request_id
+            if not int_field(fence_id, 1, MAX_INT) or not int_field(byte_count, 0, MAX_INT):
+                raise ValueError("bad dispatch boundary")
+            self.frame("ack", ackSeq=value["seq"], requestId=request_id, status="rejected")
+            self.abort_fence()
+        elif op == "ack":
+            if set(value) != {"v", "sessionId", "seq", "op", "ackSeq", "status"}:
+                raise ValueError("bad ACK fields")
+            if not int_field(value["ackSeq"], 1, MAX_INT) or value["status"] not in {"queued", "rejected"}:
+                raise ValueError("bad portfolio ACK")
+            if self.pending_cli is None or value["ackSeq"] != self.pending_cli[1]:
+                raise ValueError("stale portfolio ACK")
+            client, _, _ = self.pending_cli
+            self.reply(client, "queued" if value["status"] == "queued" else "error rejected")
+            self.pending_cli = None
+        else:
+            raise ValueError("operation not allowed from host")
+
+    def set_locale(self, locale):
+        temporary = f"/portfolio/.current-{os.getpid()}"
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        os.symlink(locale, temporary)
+        os.replace(temporary, "/portfolio/current")
+
+    def try_fence(self):
+        if self.fence is None:
+            return
+        target = self.fence["target"]
+        if self.com1_input < target or self.com1_forwarded < target:
+            return
+        fence_id = self.fence["id"]
+        self.frame("inputFenceAck", fenceId=fence_id, inputBytes=target, state="unknown")
+        self.abort_fence()
+
+    def input_bytes(self, chunk):
+        start = self.com1_input
+        self.com1_input += len(chunk)
+        if self.com1_input > MAX_INT:
+            self.error("badValue")
+            self.com1_input = MAX_INT
+        if self.fence is None:
+            self.input_queue.extend(chunk)
+        elif b"\x03" in chunk:
+            self.abort_fence()
+            self.input_queue.extend(chunk)
+        else:
+            target = self.fence["target"]
+            before = max(0, min(len(chunk), target - start))
+            if before:
+                self.input_queue.extend(chunk[:before])
+            if before < len(chunk):
+                self.gated_input.extend(chunk[before:])
+        if len(self.input_queue) + len(self.gated_input) >= FIFO_LIMIT:
+            self.error("badValue")
+        self.try_fence()
+
+    def shell_message(self, raw):
+        try:
+            message = raw.decode("ascii", "strict").strip()
+        except UnicodeDecodeError:
+            return
+        if message == "shellReady":
+            if not self.shell_ready:
+                self.shell_ready = True
+                self.send_startup_state()
+        elif message.startswith("state:"):
+            state = message[6:]
+            if state in STATES:
+                self.shell_state = state
+                if self.ready and self.initial_locale_acknowledged:
+                    self.frame("shellState", state=state)
+                elif self.ready:
+                    self.pending_shell_state = state
+    def read_fifo(self):
+        try:
+            data = os.read(self.fifo_in, 4096)
+        except BlockingIOError:
+            return
+        self.fifo_buffer.extend(data)
+        if len(self.fifo_buffer) > 4096:
+            self.fifo_buffer.clear()
+            return
+        while b"\n" in self.fifo_buffer:
+            line, _, rest = self.fifo_buffer.partition(b"\n")
+            self.fifo_buffer = bytearray(rest)
+            if len(line) <= 256:
+                self.shell_message(line)
+
+    def accept_client(self):
+        client, _ = self.server.accept()
+        client.setblocking(False)
+        self.cli_clients[client] = bytearray()
+
+    def read_client(self, client):
+        try:
+            chunk = client.recv(129)
+        except BlockingIOError:
+            return
+        if not chunk:
+            self.reply(client, "error invalid-request")
+            return
+        if not self.ready or not self.initial_locale_acknowledged:
+            self.reply(client, "error unavailable")
+            return
+        buffer = self.cli_clients.get(client)
+        if buffer is None:
+            return
+        buffer.extend(chunk)
+        if len(buffer) > 128:
+            self.reply(client, "error invalid-request")
+            return
+        if b"\n" not in buffer:
+            return
+        line, _, extra = buffer.partition(b"\n")
+        if extra:
+            self.reply(client, "error invalid-request")
+            return
+        self.handle_cli(client, line)
+
+    def handle_cli(self, client, line):
+        if not self.ready or not self.initial_locale_acknowledged:
+            self.reply(client, "error unavailable")
+            return
+        try:
+            fields = line.decode("ascii", "strict").split(" ")
+        except UnicodeDecodeError:
+            self.reply(client, "error invalid-request")
+            return
+        if any(not item for item in fields):
+            self.reply(client, "error invalid-request")
+            return
+        command, *args = fields
+        if command == "locale" and len(args) == 1 and args[0] in {"en", "ru"}:
+            try:
+                self.set_locale(args[0])
+            except OSError:
+                self.reply(client, "error unavailable")
+            else:
+                self.reply(client, f"locale {args[0]}")
+            return
+        if command not in {"open", "copy-contact"} or len(args) != 1:
+            self.reply(client, "error invalid-request")
+            return
+        link_id = args[0]
+        if not self.valid_link_id(link_id) or (command == "copy-contact" and link_id != "quick-mail"):
+            self.reply(client, "error invalid-link")
+            return
+        if not self.ready or self.pending_cli is not None:
+            self.reply(client, "error unavailable")
+            return
+        op_action = "open" if command == "open" else "copyContact"
+        if self.last_portfolio_request_id >= MAX_INT:
+            self.reply(client, "error control-unavailable")
+            self.error("badValue")
+            return
+        request_id = self.last_portfolio_request_id + 1
+        seq = self.frame("portfolioAction", requestId=request_id, action=op_action, linkId=link_id)
+        if seq is None:
+            self.reply(client, "error control-unavailable")
+            return
+        self.last_portfolio_request_id = request_id
+        self.pending_cli = (client, seq, time.monotonic() + 1.0)
+
+    def valid_link_id(self, value):
+        return value in self.link_ids
+
+    def reply(self, client, text):
+        if client not in self.cli_clients:
+            return
+        try:
+            client.sendall((text + "\n").encode("ascii"))
+        except OSError:
+            pass
+        self.cli_clients.pop(client, None)
+        try:
+            client.close()
+        except OSError:
+            pass
+
+    def process_com2(self):
+        if self.com2 is None:
+            return
+        try:
+            data = os.read(self.com2, 4096)
+        except BlockingIOError:
+            return
+        if not data:
+            self.error("badFrame")
+            return
+        try:
+            for frame in self.parser.feed(data):
+                self.handle_frame(frame)
+        except (ValueError, UnicodeError, json.JSONDecodeError):
+            self.error("badFrame")
+        except Exception:
+            self.error("internal")
+
+    def flush_fd(self, fd, queue):
+        if not queue:
+            return
+        try:
+            count = os.write(fd, queue)
+        except BlockingIOError:
+            return
+        except OSError as error:
+            if error.errno in (errno.EIO, errno.EPIPE, errno.ENXIO):
+                raise
+            return
+        del queue[:count]
+        if count and fd == self.com2 and self.bootstrap_bytes_remaining is not None:
+            self.bootstrap_bytes_remaining -= count
+            if self.bootstrap_bytes_remaining == 0:
+                self.bootstrap_bytes_remaining = None
+                self.bootstrapped = True
+        return count
+
+    def run(self):
+        while True:
+            try:
+                waitpid, _ = os.waitpid(self.shell_pid, os.WNOHANG)
+            except ChildProcessError:
+                return
+            if waitpid:
+                return
+            now = time.monotonic()
+            if self.pending_cli is not None and now >= self.pending_cli[2]:
+                self.reply(self.pending_cli[0], "error host-timeout")
+                self.pending_cli = None
+            if self.fence is not None and now >= self.fence["deadline"]:
+                if self.com1_input >= self.fence["target"] and self.com1_forwarded >= self.fence["target"]:
+                    self.frame("inputFenceAck", fenceId=self.fence["id"], inputBytes=self.fence["target"], state="unknown")
+                else:
+                    self.error("badValue")
+                self.abort_fence()
+            readers = [self.pty_master, self.fifo_in, self.server]
+            if self.com2 is not None:
+                readers.append(self.com2)
+            if len(self.input_queue) + len(self.gated_input) < FIFO_LIMIT:
+                readers.append(self.com1)
+            readers.extend(client for client in self.cli_clients if self.pending_cli is None or client is not self.pending_cli[0])
+            writers = []
+            if self.input_queue:
+                writers.append(self.pty_master)
+            if self.com1_output:
+                writers.append(self.com1)
+            if self.com2_output and self.com2 is not None:
+                writers.append(self.com2)
+            try:
+                readable, writable, _ = select.select(readers, writers, [], 0.025)
+            except InterruptedError:
+                continue
+            if self.server in readable:
+                self.accept_client()
+            if self.fifo_in in readable:
+                self.read_fifo()
+            if self.com2 is not None and self.com2 in readable:
+                self.process_com2()
+            if self.com1 in readable:
+                try:
+                    data = os.read(self.com1, min(4096, FIFO_LIMIT - len(self.input_queue) - len(self.gated_input)))
+                except BlockingIOError:
+                    data = b""
+                if data:
+                    self.input_bytes(data)
+            for client in tuple(self.cli_clients):
+                if client in readable:
+                    self.read_client(client)
+            if self.pty_master in readable and len(self.com1_output) < FIFO_LIMIT:
+                try:
+                    data = os.read(self.pty_master, min(4096, FIFO_LIMIT - len(self.com1_output)))
+                except (BlockingIOError, OSError):
+                    data = b""
+                if data:
+                    self.com1_output.extend(data)
+            if self.pty_master in writable and self.input_queue:
+                try:
+                    count = self.flush_fd(self.pty_master, self.input_queue)
+                except OSError:
+                    return
+                if count:
+                    self.com1_forwarded += count
+                    self.try_fence()
+            if self.com1 in writable:
+                self.flush_fd(self.com1, self.com1_output)
+            if self.com2 is not None and self.com2 in writable:
+                try:
+                    self.flush_fd(self.com2, self.com2_output)
+                except OSError:
+                    self.revoke()
+                    self.com2 = None
+            if self.fence is not None:
+                self.try_fence()
+
+
+def main():
+    Broker().run()
+
+
+if __name__ == "__main__":
+    main()

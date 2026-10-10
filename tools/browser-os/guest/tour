@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+cat /portfolio/current/index.txt
+printf '\n%s\n' 'Commands: about, links, projects, cv, contact'

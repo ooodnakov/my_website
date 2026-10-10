@@ -1,0 +1,51 @@
+#!/usr/bin/python3
+import socket
+import sys
+
+SOCKET_PATH = "/run/browser-os/guestctl.sock"
+
+
+def usage():
+    print("usage: guestctl open LINK_ID | copy-contact quick-mail | locale en|ru", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) == 2 and args[0] == "open" and args[1] and all(char in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in args[1]):
+        request = f"open {args[1]}\n"
+    elif args == ["copy-contact", "quick-mail"]:
+        request = "copy-contact quick-mail\n"
+    elif len(args) == 2 and args[0] == "locale" and args[1] in {"en", "ru"}:
+        request = f"locale {args[1]}\n"
+    else:
+        usage()
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(2.0)
+        try:
+            client.connect(SOCKET_PATH)
+            client.sendall(request.encode("ascii"))
+            client.shutdown(socket.SHUT_WR)
+            response = bytearray()
+            while len(response) <= 128 and b"\n" not in response:
+                chunk = client.recv(129 - len(response))
+                if not chunk:
+                    break
+                response.extend(chunk)
+        except OSError as error:
+            print(f"guestctl: unavailable ({error.__class__.__name__})", file=sys.stderr)
+            raise SystemExit(1)
+
+    if len(response) > 128 or b"\n" not in response:
+        print("guestctl: invalid daemon response", file=sys.stderr)
+        raise SystemExit(1)
+    result = response[:-1].decode("ascii", "strict")
+    if result.startswith("error "):
+        print(f"guestctl: {result[6:]}", file=sys.stderr)
+        raise SystemExit(1)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

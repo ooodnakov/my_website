@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+  printf '%s\n' 'usage: open LINK_ID' >&2
+  exit 2
+fi
+case "$1" in
+  *[!a-z0-9-]*)
+    printf '%s\n' 'open: expected a canonical LINK_ID' >&2
+    exit 2
+    ;;
+esac
+exec /usr/local/bin/guestctl open "$1"
