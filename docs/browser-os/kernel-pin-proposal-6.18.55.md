@@ -1,11 +1,11 @@
 # Proposal: `linux-virt=6.18.55-r0`
 
-Status: proposal only; not an approved compatibility update. The Website CI pin remains `linux-virt=6.18.54-r0`. Exact `6.18.54-r0` APK/source artifacts and verified hashes were not recovered from the current Alpine v3.24 `main/x86_64` package index; that index supplies `6.18.55-r0`. Keep the newer pin separate from the Website pin until the owner approves it. Do not float or silently replace either version.
+Status: candidate only; not an approved compatibility update. The Website CI pin remains `linux-virt=6.18.54-r0`. The generated x86 guest package inventory records `linux-virt=6.18.55-r0` with APK architecture `x86`, and the current Alpine v3.24 `main/x86` index provides that exact APK. The exact `6.18.54-r0` package was not found in that current index. Keep the candidate separate from the Website pin until the owner approves it. Do not float or silently replace either version.
 
 ## Package and source provenance
 
-- Distribution/repository: Alpine Linux 3.24, [`main/x86_64` package index](https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/); package `linux-virt=6.18.55-r0`.
-- APKINDEX package checksum (base64): `Q1JrMVoVE1Vw30rhuGKo8VsKCUIfs=`. This is the index's package checksum, not a separately downloaded APK SHA-256.
+- Distribution/repository: Alpine Linux 3.24, [`main/x86` package index](https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86/); package `linux-virt=6.18.55-r0`, APK architecture `x86` (i686 guest), file `linux-virt-6.18.55-r0.apk`.
+- APKINDEX package checksum (APK's SHA-1 digest, base64 with `Q1` algorithm prefix): `Q1JrMVoVE1Vw30rhuGKo8VsKCUIfs=`; decoded SHA-1: `26b315a15135570df4ae1b862a8f15b0a09421fb`. This is the exact package checksum recorded by the generated package inventory, not an independently hashed local APK file.
 - Recipe source: Alpine aports commit [`52fae6d7d56f3958f32e5bf9121a7536524b9ef4`](https://gitlab.alpinelinux.org/alpine/aports/-/blob/52fae6d7d56f3958f32e5bf9121a7536524b9ef4/main/linux-lts/APKBUILD), `main/linux-lts/APKBUILD`; Git blob SHA-1 `32112e4a925ef0040c81f832366de609d51ece7c`; recipe content SHA-256 `00a7e0fd554965d5bde51c782bfa919fb1b02e9ce86fca3c01c10091f2e2ad39`.
 - Kernel source archive: `linux-6.18.tar.xz`, SHA-512 `88599ffdec96d150c1feb9b261ba93bb0301a9d0e1ad6bef7aeab1f5372cbfc57d8b43c7e902bd8f76921d1dbd8189663c142ea869e51d0e2b483b150ee00fe0`.
 - Stable patch archive: `patch-6.18.55.patch.xz`, SHA-512 `274d804a47fc28a8260907ac27f2efc95a4668f67d31a036e88c82cdaf16e8a2ba33dce18f7b344595d2cbd60d310e7b6b0ccae6d1f4dab2eb65badb61e8ef66`.
