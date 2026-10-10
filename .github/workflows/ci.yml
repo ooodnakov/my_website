@@ -115,6 +115,9 @@ jobs:
         if: ${{ matrix.name == 'main-browser' }}
         working-directory: apps/main
         run: pnpm exec playwright install --with-deps chromium
+      - name: Run development browser end-to-end suite
+        if: ${{ matrix.name == 'main-browser' }}
+        run: pnpm --dir apps/main test:e2e
 
       - name: Run ${{ matrix.name }}
         working-directory: ${{ matrix.working-directory }}

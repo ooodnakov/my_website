@@ -46,6 +46,7 @@ test("legacy files and archive redirect are served", async ({ request }) => {
 });
 
 test("Browser OS release assets are all served with manifest hashes", async ({ request }) => {
+  test.setTimeout(120_000);
   const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
   const manifestResponse = await request.get(`${release}/manifest.json`);
   expect(manifestResponse.status()).toBe(200);

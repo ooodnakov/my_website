@@ -416,8 +416,7 @@ test("the opt-in worker rejects a mismatched guest build descriptor before reque
 
 
 test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
-  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   const workerUrls: string[] = [];
   const wasmUrls: string[] = [];
   page.on("worker", (worker) => workerUrls.push(worker.url()));
@@ -438,6 +437,52 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(mobileClear).toBeDisabled();
+  const mobileQuickActions = page.locator(".terminal-mobile-bar button:not(.terminal-keyboard-button)");
+  await expect(mobileQuickActions).toHaveCount(5);
+  expect(await mobileQuickActions.evaluateAll((buttons) =>
+    buttons.every((button) => (button as HTMLButtonElement).disabled),
+  )).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  const input = page.locator(".xterm-helper-textarea");
+  const readGuestSize = async (label: string) => {
+    await input.click();
+    await page.keyboard.type(`size=$(stty size); printf '${label}=%s\\n' "$size"`);
+    await page.keyboard.press("Enter");
+    let dimensions: [number, number] | null = null;
+    await expect.poll(async () => {
+      const rows = await screen.locator(".xterm-rows > div").allTextContents();
+      const line = rows.find((row) => row.includes(`${label}=`));
+      const match = line?.match(new RegExp(`${label}=\\s*(\\d+)\\s+(\\d+)`));
+      dimensions = match ? [Number(match[1]), Number(match[2])] : null;
+      return dimensions !== null;
+    }).toBe(true);
+    if (!dimensions) throw new Error(`Guest did not report terminal dimensions for ${label}`);
+    return dimensions;
+  };
+  const wideSize = await readGuestSize("TERM_WIDE");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrowSize = await readGuestSize("TERM_NARROW");
+  expect(narrowSize[1]).toBeLessThan(wideSize[1]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("link", { name: "[RU]" }).click();
+  await expect(page).toHaveURL(/\/ru$/);
+  await input.click();
+  await page.keyboard.type("tour");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Тур", { timeout: 30_000 });
+  expect(page.workers()).toHaveLength(1);
+  await page.getByRole("link", { name: "[EN]" }).click();
+  await expect(page).toHaveURL(/\/en$/);
+  await input.click();
+  await page.keyboard.type("tour");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Tour", { timeout: 30_000 });
+  expect(page.workers()).toHaveLength(1);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(mobileClear).toBeDisabled();
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(mobileClearDom).toBeHidden();
   expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
@@ -447,7 +492,6 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   expect(wasmUrls.some((url) => new URL(url).pathname.endsWith("/v86.wasm"))).toBe(true);
   expect(wasmUrls.every((url) => new URL(url).origin === origin)).toBe(true);
 
-  const input = page.locator(".xterm-helper-textarea");
   await input.click();
   await page.keyboard.type("printf 'Привет Linux\\n' | tee /tmp/os-preview.txt | tr 'a-z' 'A-Z' > /tmp/os-preview.upper; pipeStatus=$?; cat /tmp/os-preview.txt /tmp/os-preview.upper; printf 'PIPE_EXIT=%d\\n' \"$pipeStatus\"");
   await page.keyboard.press("Enter");
@@ -470,10 +514,28 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
+  await input.click();
+  await page.keyboard.type("for i in {1..100}; do echo LESS_LINE_$i; done > /tmp/less.txt; LESS='' less /tmp/less.txt");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("LESS_LINE_1", { timeout: 30_000 });
+  await page.keyboard.press("q");
+  await input.click();
+  await page.keyboard.type("printf 'AFTER_LESS=%s\\n' \"$((20+22))\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("AFTER_LESS=42", { timeout: 30_000 });
+
+  await input.click();
+  await page.keyboard.type("printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; nano /tmp/preview.txt");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("EDITOR_TEXT", { timeout: 30_000 });
+  await page.keyboard.press("Control+X");
+  await input.click();
+  await page.keyboard.type("printf 'AFTER_NANO=%s\\n' \"$(cat /tmp/preview.txt)\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("AFTER_NANO=EDITOR_TEXT", { timeout: 30_000 });
 });
 
 test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
-  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
   test.setTimeout(240_000);
   const workerUrls: string[] = [];
   let fallbackRequested = false;
@@ -513,7 +575,6 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
 });
 
 test("opt-in guest native actions expose truthful open and clipboard feedback", async ({ page }) => {
-  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
   test.setTimeout(240_000);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
@@ -568,19 +629,20 @@ test("opt-in guest native actions expose truthful open and clipboard feedback", 
 });
 
 test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
-  test.skip(process.env.PLAYWRIGHT_TEST_PRODUCTION !== "1", "The production asset pipeline generates the maintained guest.");
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   let workerCreations = 0;
   page.on("worker", () => { workerCreations += 1; });
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
   await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
   expect(page.workers()).toHaveLength(1);
-  const workerCountBeforeReset = workerCreations;
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
-  await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
-  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
-  expect(page.workers()).toHaveLength(1);
+  for (let reset = 0; reset < 2; reset += 1) {
+    const workerCountBeforeReset = workerCreations;
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
+    await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+    expect(page.workers()).toHaveLength(1);
+  }
 
   await page.evaluate(() => {
     history.pushState({}, "", "/__terminal-away");

@@ -3,6 +3,16 @@ import fs from "fs";
 import path from "path";
 
 const serverDir = typeof __dirname !== "undefined" ? __dirname : path.resolve(process.cwd(), "server");
+const legacyArchiveRedirects = new Map<string, string>([
+  ["/legacy/projects", "/legacy/archive/projects/"],
+  ["/legacy/projects/", "/legacy/archive/projects/"],
+  ["/legacy/events", "/legacy/archive/events/"],
+  ["/legacy/events/", "/legacy/archive/events/"],
+  ["/legacy/gallery", "/legacy/archive/gallery/"],
+  ["/legacy/gallery/", "/legacy/archive/gallery/"],
+  ["/legacy/video", "/legacy/archive/video/"],
+  ["/legacy/video/", "/legacy/archive/video/"],
+]);
 
 function resolveFirstExistingPath(paths: string[]) {
   return paths.find((candidate) => fs.existsSync(candidate));
@@ -24,6 +34,8 @@ function legacyFileCandidates(fileName: string) {
   return [
     path.resolve(legacyDistPath, "files", fileName),
     path.resolve(legacyDistPath, "archive", "files", fileName),
+    path.resolve(serverDir, "..", "..", "legacy_rewored", "dist", "files", fileName),
+    path.resolve(serverDir, "..", "..", "legacy_rewored", "dist", "archive", "files", fileName),
     path.resolve(legacySourcePath, fileName),
   ];
 }
@@ -55,6 +67,32 @@ export function registerLegacyFileRoutes(app: Express) {
     res.setHeader("Content-Disposition", 'inline; filename="odnakov_vcard.vcf"');
     return sendLegacyFile(res, "odnakov_vcard.vcf", "text/vcard");
   });
+}
+
+function serveCvApp(app: Express, cvDistPath: string) {
+  app.use("/cv", express.static(cvDistPath));
+  app.get("/cv", (_req, res) => {
+    res.sendFile(path.resolve(cvDistPath, "index.html"));
+  });
+  app.get("/cv/{*path}", (_req, res) => {
+    res.sendFile(path.resolve(cvDistPath, "index.html"));
+  });
+}
+
+function serveLegacyApp(app: Express, legacyDistPath: string) {
+  app.get(Array.from(legacyArchiveRedirects.keys()), (req, res) => {
+    const target = legacyArchiveRedirects.get(req.path);
+    if (!target) return res.status(404).end();
+    return res.redirect(302, target);
+  });
+  app.use("/legacy", express.static(legacyDistPath));
+}
+
+export function serveDevelopmentSubapps(app: Express) {
+  const cvDistPath = path.resolve(serverDir, "..", "..", "cv-site", "dist");
+  const legacyDistPath = path.resolve(serverDir, "..", "..", "legacy_rewored", "dist");
+  if (fs.existsSync(cvDistPath)) serveCvApp(app, cvDistPath);
+  if (fs.existsSync(legacyDistPath)) serveLegacyApp(app, legacyDistPath);
 }
 
 export function registerBrowserOsAssetRoutes(app: Express, assetRoot: string) {
@@ -95,32 +133,8 @@ export function serveStatic(app: Express) {
     );
   }
 
-  const legacyArchiveRedirects = new Map<string, string>([
-    ["/legacy/projects", "/legacy/archive/projects/"],
-    ["/legacy/projects/", "/legacy/archive/projects/"],
-    ["/legacy/events", "/legacy/archive/events/"],
-    ["/legacy/events/", "/legacy/archive/events/"],
-    ["/legacy/gallery", "/legacy/archive/gallery/"],
-    ["/legacy/gallery/", "/legacy/archive/gallery/"],
-    ["/legacy/video", "/legacy/archive/video/"],
-    ["/legacy/video/", "/legacy/archive/video/"],
-  ]);
-
-  app.use("/cv", express.static(cvDistPath));
-  app.get("/cv", (_req, res) => {
-    res.sendFile(path.resolve(cvDistPath, "index.html"));
-  });
-  app.get("/cv/{*path}", (_req, res) => {
-    res.sendFile(path.resolve(cvDistPath, "index.html"));
-  });
-  app.get(Array.from(legacyArchiveRedirects.keys()), (req, res) => {
-    const target = legacyArchiveRedirects.get(req.path);
-    if (!target) {
-      return res.status(404).end();
-    }
-    return res.redirect(302, target);
-  });
-  app.use("/legacy", express.static(legacyDistPath));
+  serveCvApp(app, cvDistPath);
+  serveLegacyApp(app, legacyDistPath);
 
   registerBrowserOsAssetRoutes(app, path.resolve(distPath, "browser-os"));
 
