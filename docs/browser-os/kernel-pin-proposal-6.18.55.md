@@ -18,4 +18,10 @@ Status: candidate only; not an approved compatibility update. The Website CI pin
 - Current reviewed manifest SHA-256: `20740fa24d75e783fa5ffdf9144ef1f48459aa5dfd9a1582cb8e1cf732118a63`; guest descriptor/build ID SHA-256: `1547e2abe7d02b8b4dcf174267e3d90d03952befbd0370af4d5c0928958d4224`. The retained manifest records 2,704 files (2,695 runtime files), 48,855,088 runtime bytes, 30,447,695 compressed 9p-blob bytes, and 52 source records.
 - The retained G/H exports are byte-identical. Their log SHA-256 values are G `a10171152c1f4ee9b6cd89b1afa0f0c11bd76a81c9d18e042cad0385dcdcab7a` and H `62fa6fb519a9ce93719ad1b851e6c106803137bd1e4ee2bdcf51d4608b90fcfa`.
 - These are preserved earlier outputs, not a fresh full image generation. The previous PR18 head changed documentation only; its Node/Python unit-test passes and source-byte checks do not establish a patched-zsh build, a positive dispatched action, or browser acceptance.
+
+## Zsh control prototype status
+
+- `tools/browser-os/zsh-browser-os.patch` applies to the pinned pristine zsh 5.9 source; a native ARM64 `make -j2` completed, with two context hunks applying at fuzz 1. A PTY smoke check observed clean/busy safe-point ordinals, and the broker suite passes 17 tests. This is not an Alpine x86 package or generated guest build.
+- The prototype does not yet implement a ZLE control receive loop or fixed-ID action executor/one-use commit/job-control/ACK/cancel path. Dispatch remains rejected. Native Ctrl+C accounting is not synchronized with forwarded-input ordinals during child job execution, so input-fence correctness across cancellation is unproven. No positive action, race receipt, or browser acceptance is claimed.
+- The candidate remains unratified; no generated package, descriptor, or source hash is changed by this prototype, and the Website pin remains unchanged.
 - The retained kernel SHA-256 remains `44a79a6471ebe42d1e4d97965bbc61752934ab0d1f6a38b5604dfc9d2df33531` (release `6.18.55-0-virt`). The candidate remains unratified and the Website kernel pin is unchanged.
