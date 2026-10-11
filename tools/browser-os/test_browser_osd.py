@@ -63,6 +63,8 @@ class FenceOrderingTests(unittest.TestCase):
         broker = BROKER.Broker.__new__(BROKER.Broker)
         broker.com1_input = 0
         broker.com1_forwarded = 0
+        broker.zle_input_ordinal = 0
+        broker.zle_state = 0
         broker.input_queue = bytearray()
         broker.gated_input = bytearray()
         broker.fence = {"id": 7, "target": target, "deadline": 10**9}
@@ -82,17 +84,50 @@ class FenceOrderingTests(unittest.TestCase):
         self.assertEqual(broker.frames, [])
 
         broker.com1_forwarded = 3
+        broker.zle_input_ordinal = 2
+        broker.try_fence()
+
+        self.assertEqual(broker.frames, [])
+        self.assertEqual(broker.input_queue, b"abc")
+        self.assertEqual(broker.gated_input, b"d")
+        self.assertIsNotNone(broker.fence)
+
+        broker.zle_input_ordinal = 3
+        broker.zle_state = 1
         broker.try_fence()
 
         self.assertEqual(broker.frames, [("inputFenceAck", {
             "fenceId": 7,
             "inputBytes": 3,
-            "state": "unknown",
+            "state": "cleanPrompt",
         })])
+        self.assertEqual(broker.input_queue, b"abc")
+        self.assertEqual(broker.gated_input, b"d")
+        self.assertTrue(broker.fence["acknowledged"])
+        broker.abort_fence()
         self.assertEqual(broker.input_queue, b"abcd")
         self.assertEqual(broker.gated_input, b"")
         self.assertIsNone(broker.fence)
         self.assertEqual(broker.errors, [])
+
+    def test_nonclean_editor_state_rejects_and_releases_suffix(self):
+        broker = self.broker_with_fence(3)
+        broker.input_bytes(b"ab")
+        broker.input_bytes(b"cd")
+        broker.com1_forwarded = 3
+        broker.zle_input_ordinal = 3
+        broker.zle_state = 0
+
+        broker.try_fence()
+
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7,
+            "inputBytes": 3,
+            "state": "busy",
+        })])
+        self.assertEqual(broker.input_queue, b"abcd")
+        self.assertEqual(broker.gated_input, b"")
+        self.assertIsNone(broker.fence)
 
     def test_ctrl_c_cancels_an_active_fence_and_releases_every_byte_in_order(self):
         broker = self.broker_with_fence(3)

@@ -325,7 +325,7 @@ export async function runGuestSmoke(emulator, bootStartedAt, timeoutMs = 900000,
     sendControl("inputFence", { fenceId: 1, inputBytes: fenceBytes });
     sendBytes(Uint8Array.of(0x79));
     const fenceAck = await waitForControl(frame => frame.op === "inputFenceAck" && frame.fenceId === 1 && frame.inputBytes === fenceBytes);
-    if (fenceAck.state !== "unknown") throw new Error(`guest claimed an unproven editor boundary: ${JSON.stringify(fenceAck)}`);
+    if (fenceAck.state !== "busy") throw new Error(`nonempty editor buffer was not rejected: ${JSON.stringify(fenceAck)}`);
     const dispatch = sendControl("dispatchAction", { action: "tour", requestId: 1, fenceId: 1, inputBytes: fenceBytes });
     const dispatchAck = await waitForControl(frame => frame.op === "ack" && frame.ackSeq === dispatch.seq && frame.requestId === 1);
     if (dispatchAck.status !== "rejected") throw new Error(`unsafe dispatch was not rejected: ${JSON.stringify(dispatchAck)}`);
