@@ -3,6 +3,68 @@ import { createHash } from "node:crypto";
 
 type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
 
+function readLabeledSize(rows: string[], label: string): [number, number] | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const resultPattern = new RegExp(`^${escapedLabel}=\\s*(\\d+)\\s+(\\d+)\\s*$`);
+  for (const row of rows) {
+    const match = resultPattern.exec(row.trim());
+    if (match) return [Number(match[1]), Number(match[2])];
+  }
+  return null;
+}
+
+const GUEST_RELEASE = "alpine-3.24.2-v86-0.5.469";
+
+async function requireGeneratedGuestManifest(page: Page) {
+  const path = `/browser-os/${GUEST_RELEASE}/manifest.json`;
+  const response = await page.request.get(path);
+  if (!response.ok()) {
+    throw new Error(`Generated-guest test requires ${path}; received HTTP ${response.status()}`);
+  }
+
+  const manifest = await response.json() as {
+    schemaVersion?: unknown;
+    release?: unknown;
+    guest?: { buildId?: unknown; buildIdentityPath?: unknown };
+    assets?: Record<string, { bytes?: unknown; sha256?: unknown }>;
+  };
+  const buildId = manifest.guest?.buildId;
+  const identityPath = manifest.guest?.buildIdentityPath;
+  const identityAsset = typeof identityPath === "string" ? manifest.assets?.[identityPath] : undefined;
+  if (manifest.schemaVersion !== 1
+    || manifest.release !== GUEST_RELEASE
+    || typeof buildId !== "string"
+    || !/^[0-9a-f]{64}$/.test(buildId)
+    || !identityAsset
+    || identityAsset.sha256 !== buildId
+    || !Number.isSafeInteger(identityAsset.bytes)
+    || (identityAsset.bytes as number) <= 0) {
+    throw new Error(`Generated-guest test requires a manifest with a matching embedded build-identity asset: ${path}`);
+  }
+}
+
+function readLabeledSizes(rows: string[], label: string): [number, number][] {
+  return rows.flatMap((row) => {
+    const size = readLabeledSize([row], label);
+    return size ? [size] : [];
+  });
+}
+
+function guestResizeMonitor(label: "LESS" | "NANO") {
+  const sizesFile = `/tmp/${label.toLowerCase()}-sizes`;
+  return {
+    start: `: > ${sizesFile}; (while :; do stty size </dev/tty >> ${sizesFile}; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
+    stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; sort -u ${sizesFile} | while IFS= read -r size; do printf '${label}_SIZE=%s\\n' "$size"; done`,
+  };
+}
+
+
+test("terminal resize result selection ignores the echoed command", () => {
+  const commandEcho = `size=$(stty size); printf 'TERM_WIDE=%s\\n' "$size"`;
+  expect(readLabeledSize([commandEcho], "TERM_WIDE")).toBeNull();
+  expect(readLabeledSize([commandEcho, "TERM_WIDE= 42 120"], "TERM_WIDE")).toEqual([42, 120]);
+});
+
 async function clickExpectedTerminalLink(
   page: Page,
   row: Locator,
@@ -370,11 +432,22 @@ test("development missing browser OS assets return a real 404", async ({ request
 });
 
 test("the opt-in worker surfaces a missing manifest and returns to lightweight mode", async ({ page }) => {
-  await page.route("**/browser-os/**", (route) => route.abort());
+  test.setTimeout(30_000);
+  const expectedManifestPath = `/browser-os/${GUEST_RELEASE}/manifest.json`;
+  const missingManifestResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === expectedManifestPath,
+  { timeout: 15_000 });
+  await page.route(`**${expectedManifestPath}`, (route) => route.fulfill({
+    status: 404,
+    contentType: "application/json",
+    body: JSON.stringify({ message: "Browser OS asset not found" }),
+  }));
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
-  await expect(page.getByRole("alert")).toBeVisible();
+  const response = await missingManifestResponse;
+  expect(response.status()).toBe(404);
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
   await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
 });
@@ -398,6 +471,7 @@ test("the opt-in worker rejects an unpinned guest manifest before requesting ass
 
 test("the opt-in worker rejects a mismatched guest build descriptor before requesting assets", async ({ page }) => {
   const releaseRequests: string[] = [];
+  await requireGeneratedGuestManifest(page);
   await page.route("**/browser-os/**/manifest.json", async (route) => {
     const response = await route.fetch();
     const manifest = await response.json();
@@ -417,6 +491,7 @@ test("the opt-in worker rejects a mismatched guest build descriptor before reque
 
 test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
   test.setTimeout(360_000);
+  await requireGeneratedGuestManifest(page);
   const workerUrls: string[] = [];
   const wasmUrls: string[] = [];
   page.on("worker", (worker) => workerUrls.push(worker.url()));
@@ -453,9 +528,7 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
     let dimensions: [number, number] | null = null;
     await expect.poll(async () => {
       const rows = await screen.locator(".xterm-rows > div").allTextContents();
-      const line = rows.find((row) => row.includes(`${label}=`));
-      const match = line?.match(new RegExp(`${label}=\\s*(\\d+)\\s+(\\d+)`));
-      dimensions = match ? [Number(match[1]), Number(match[2])] : null;
+      dimensions = readLabeledSize(rows, label);
       return dimensions !== null;
     }).toBe(true);
     if (!dimensions) throw new Error(`Guest did not report terminal dimensions for ${label}`);
@@ -514,21 +587,58 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
+  const lessMonitor = guestResizeMonitor("LESS");
   await input.click();
-  await page.keyboard.type("for i in {1..100}; do echo LESS_LINE_$i; done > /tmp/less.txt; LESS='' less /tmp/less.txt");
+  await page.keyboard.type(`${lessMonitor.start}; for i in {1..100}; do echo LESS_LINE_$i; done > /tmp/less.txt; LESS='' less /tmp/less.txt; ${lessMonitor.stop}`);
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("LESS_LINE_1", { timeout: 30_000 });
+  await expect(screen.locator(".xterm-rows > div")).toHaveCount(wideSize[0], { timeout: 30_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(screen.locator(".xterm-rows > div")).toHaveCount(narrowSize[0], { timeout: 30_000 });
   await page.keyboard.press("q");
+  let lessSizes: [number, number][] = [];
+  await expect.poll(async () => {
+    const rows = await screen.locator(".xterm-rows > div").allTextContents();
+    lessSizes = readLabeledSizes(rows, "LESS_SIZE");
+    return lessSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
+      && lessSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+  }, { timeout: 30_000 }).toBe(true);
   await input.click();
   await page.keyboard.type("printf 'AFTER_LESS=%s\\n' \"$((20+22))\"");
   await page.keyboard.press("Enter");
-  await expect(screen).toContainText("AFTER_LESS=42", { timeout: 30_000 });
 
+  await expect(screen).toContainText("AFTER_LESS=42", { timeout: 30_000 });
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  const nanoMonitor = guestResizeMonitor("NANO");
   await input.click();
-  await page.keyboard.type("printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; nano /tmp/preview.txt");
+  await page.keyboard.type(`printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; ${nanoMonitor.start}; nano /tmp/preview.txt; ${nanoMonitor.stop}`);
   await page.keyboard.press("Enter");
-  await expect(screen).toContainText("EDITOR_TEXT", { timeout: 30_000 });
+  const nanoRows = screen.locator(".xterm-rows > div");
+  await expect.poll(async () => {
+    const renderedRows = await nanoRows.allTextContents();
+    return renderedRows.some((line) => /GNU nano/.test(line))
+      && renderedRows.some((line) => line.includes("^X Exit"))
+      && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
+  }, { timeout: 30_000 }).toBe(true);
+  await expect(nanoRows).toHaveCount(wideSize[0], { timeout: 30_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(nanoRows).toHaveCount(narrowSize[0], { timeout: 30_000 });
+  await expect.poll(async () => {
+    const renderedRows = await nanoRows.allTextContents();
+    return renderedRows.some((line) => /GNU nano/.test(line))
+      && renderedRows.some((line) => line.includes("^X Exit"))
+      && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
+  }, { timeout: 30_000 }).toBe(true);
   await page.keyboard.press("Control+X");
+  let nanoSizes: [number, number][] = [];
+  await expect.poll(async () => {
+    const rows = await screen.locator(".xterm-rows > div").allTextContents();
+    nanoSizes = readLabeledSizes(rows, "NANO_SIZE");
+    return nanoSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
+      && nanoSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+  }, { timeout: 30_000 }).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
   await input.click();
   await page.keyboard.type("printf 'AFTER_NANO=%s\\n' \"$(cat /tmp/preview.txt)\"");
   await page.keyboard.press("Enter");
@@ -537,6 +647,7 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
 
 test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
   test.setTimeout(240_000);
+  await requireGeneratedGuestManifest(page);
   const workerUrls: string[] = [];
   let fallbackRequested = false;
   const malformedPrimary = Buffer.from([0xff, 0x00, 0x01]);
@@ -576,6 +687,7 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
 
 test("opt-in guest native actions expose truthful open and clipboard feedback", async ({ page }) => {
   test.setTimeout(240_000);
+  await requireGeneratedGuestManifest(page);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -630,6 +742,7 @@ test("opt-in guest native actions expose truthful open and clipboard feedback", 
 
 test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
   test.setTimeout(360_000);
+  await requireGeneratedGuestManifest(page);
   let workerCreations = 0;
   page.on("worker", () => { workerCreations += 1; });
   await page.goto("/en");

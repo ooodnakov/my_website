@@ -49,8 +49,12 @@ test("Browser OS release assets are all served with manifest hashes", async ({ r
   test.setTimeout(120_000);
   const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
   const manifestResponse = await request.get(`${release}/manifest.json`);
-  expect(manifestResponse.status()).toBe(200);
+  expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
   const manifest = await manifestResponse.json();
+  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.release).toBe(release.slice("/browser-os/".length));
+  expect(manifest.guest.buildId).toMatch(/^[0-9a-f]{64}$/);
+  expect(manifest.assets[manifest.guest.buildIdentityPath]?.sha256).toBe(manifest.guest.buildId);
 
   const requiredAssets = [
     "alpine/vmlinuz",
@@ -81,8 +85,14 @@ test("Browser OS missing assets return JSON 404 and guest assets revalidate", as
   expect(missing.headers()["content-type"]).toContain("application/json");
   expect(await missing.text()).not.toContain("<!doctype html>");
 
-  const manifest = await (await request.get("/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json")).json();
   const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
+  const manifestResponse = await request.get(`${release}/manifest.json`);
+  expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
+  const manifest = await manifestResponse.json();
+  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.release).toBe(release.slice("/browser-os/".length));
+  expect(manifest.guest.buildId).toMatch(/^[0-9a-f]{64}$/);
+  expect(manifest.assets[manifest.guest.buildIdentityPath]?.sha256).toBe(manifest.guest.buildId);
   const wasm = await request.get(`${release}/${manifest.emulator.assetPaths.wasm}`);
   expect(wasm.status()).toBe(200);
   expect(wasm.headers()["content-type"]).toContain("application/wasm");
@@ -95,7 +105,6 @@ test("Browser OS missing assets return JSON 404 and guest assets revalidate", as
   expect(revalidatedWasm.status()).toBe(304);
 
   expect(wasm.headers()["cache-control"]).toContain("must-revalidate");
-  const manifestResponse = await request.get(`${release}/manifest.json`);
   expect(manifestResponse.headers()["cache-control"]).toContain("no-cache");
   const manifestEtag = manifestResponse.headers()["etag"];
   if (!manifestEtag) throw new Error("Expected the manifest ETag");
