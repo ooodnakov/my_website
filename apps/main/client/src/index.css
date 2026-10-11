@@ -214,6 +214,26 @@ html {
   display: none;
 }
 
+.terminal-guest-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #504945;
+  padding: 8px 12px;
+  color: #ebdbb2;
+}
+
+.terminal-guest-action button {
+  min-height: 36px;
+  border: 1px solid #665c54;
+  border-radius: 7px;
+  background: #1d2021;
+  padding: 6px 10px;
+  color: #fabd2f;
+  touch-action: manipulation;
+}
+
 @media (max-width: 640px) {
   .terminal-window {
     border-radius: 0.75rem;

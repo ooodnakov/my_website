@@ -1,6 +1,69 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
+
+function readLabeledSize(rows: string[], label: string): [number, number] | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const resultPattern = new RegExp(`^${escapedLabel}=\\s*(\\d+)\\s+(\\d+)\\s*$`);
+  for (const row of rows) {
+    const match = resultPattern.exec(row.trim());
+    if (match) return [Number(match[1]), Number(match[2])];
+  }
+  return null;
+}
+
+const GUEST_RELEASE = "alpine-3.24.2-v86-0.5.469";
+
+async function requireGeneratedGuestManifest(page: Page) {
+  const path = `/browser-os/${GUEST_RELEASE}/manifest.json`;
+  const response = await page.request.get(path);
+  if (!response.ok()) {
+    throw new Error(`Generated-guest test requires ${path}; received HTTP ${response.status()}`);
+  }
+
+  const manifest = await response.json() as {
+    schemaVersion?: unknown;
+    release?: unknown;
+    guest?: { buildId?: unknown; buildIdentityPath?: unknown };
+    assets?: Record<string, { bytes?: unknown; sha256?: unknown }>;
+  };
+  const buildId = manifest.guest?.buildId;
+  const identityPath = manifest.guest?.buildIdentityPath;
+  const identityAsset = typeof identityPath === "string" ? manifest.assets?.[identityPath] : undefined;
+  if (manifest.schemaVersion !== 1
+    || manifest.release !== GUEST_RELEASE
+    || typeof buildId !== "string"
+    || !/^[0-9a-f]{64}$/.test(buildId)
+    || !identityAsset
+    || identityAsset.sha256 !== buildId
+    || !Number.isSafeInteger(identityAsset.bytes)
+    || (identityAsset.bytes as number) <= 0) {
+    throw new Error(`Generated-guest test requires a manifest with a matching embedded build-identity asset: ${path}`);
+  }
+}
+
+function readLabeledSizes(rows: string[], label: string): [number, number][] {
+  return rows.flatMap((row) => {
+    const size = readLabeledSize([row], label);
+    return size ? [size] : [];
+  });
+}
+
+function guestResizeMonitor(label: "LESS" | "NANO") {
+  const sizesFile = `/tmp/${label.toLowerCase()}-sizes`;
+  return {
+    start: `: > ${sizesFile}; (while :; do stty size </dev/tty >> ${sizesFile}; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
+    stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; sort -u ${sizesFile} | while IFS= read -r size; do printf '${label}_SIZE=%s\\n' "$size"; done`,
+  };
+}
+
+
+test("terminal resize result selection ignores the echoed command", () => {
+  const commandEcho = `size=$(stty size); printf 'TERM_WIDE=%s\\n' "$size"`;
+  expect(readLabeledSize([commandEcho], "TERM_WIDE")).toBeNull();
+  expect(readLabeledSize([commandEcho, "TERM_WIDE= 42 120"], "TERM_WIDE")).toEqual([42, 120]);
+});
 
 async function clickExpectedTerminalLink(
   page: Page,
@@ -350,3 +413,354 @@ for (const lang of ["en", "ru"]) {
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
+
+test("the lightweight terminal does not fetch VM assets before opt-in", async ({ page }) => {
+  const assetRequests: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/browser-os/")) assetRequests.push(request.url());
+  });
+  await page.goto("/en");
+  await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
+  expect(assetRequests).toEqual([]);
+});
+
+test("development missing browser OS assets return a real 404", async ({ request }) => {
+  const response = await request.get("/browser-os/missing-release/manifest.json");
+  expect(response.status()).toBe(404);
+  expect(response.headers()["content-type"]).toContain("application/json");
+  expect(await response.text()).not.toContain("<!doctype html>");
+});
+
+test("the opt-in worker surfaces a missing manifest and returns to lightweight mode", async ({ page }) => {
+  test.setTimeout(30_000);
+  const expectedManifestPath = `/browser-os/${GUEST_RELEASE}/manifest.json`;
+  const missingManifestResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === expectedManifestPath,
+  { timeout: 15_000 });
+  await page.route(`**${expectedManifestPath}`, (route) => route.fulfill({
+    status: 404,
+    contentType: "application/json",
+    body: JSON.stringify({ message: "Browser OS asset not found" }),
+  }));
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  const response = await missingManifestResponse;
+  expect(response.status()).toBe(404);
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
+  await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
+});
+
+test("the opt-in worker rejects an unpinned guest manifest before requesting assets", async ({ page }) => {
+  const releaseRequests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/browser-os/")) releaseRequests.push(pathname);
+  });
+  await page.route("**/browser-os/**/manifest.json", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ schemaVersion: 1, release: "untrusted-release" }),
+  }));
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
+  expect(releaseRequests).toEqual(["/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json"]);
+});
+
+test("the opt-in worker rejects a mismatched guest build descriptor before requesting assets", async ({ page }) => {
+  const releaseRequests: string[] = [];
+  await requireGeneratedGuestManifest(page);
+  await page.route("**/browser-os/**/manifest.json", async (route) => {
+    const response = await route.fetch();
+    const manifest = await response.json();
+    manifest.guest.buildId = "f".repeat(64);
+    await route.fulfill({ response, json: manifest });
+  });
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/browser-os/") && !pathname.endsWith("/manifest.json")) releaseRequests.push(pathname);
+  });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
+  expect(releaseRequests).toEqual([]);
+});
+
+
+test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
+  test.setTimeout(360_000);
+  await requireGeneratedGuestManifest(page);
+  const workerUrls: string[] = [];
+  const wasmUrls: string[] = [];
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/browser-os/") && url.pathname.endsWith(".wasm")) wasmUrls.push(url.href);
+  });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/en");
+  const screen = page.locator(".xterm-screen");
+  const mobileClear = page.locator(".terminal-mobile-bar").getByRole("button", { name: "clear", exact: true });
+  const mobileClearDom = page.locator(".terminal-mobile-bar button").filter({ hasText: /^clear$/ });
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(mobileClear).toBeDisabled();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(mobileClear).toBeDisabled();
+  const mobileQuickActions = page.locator(".terminal-mobile-bar button:not(.terminal-keyboard-button)");
+  await expect(mobileQuickActions).toHaveCount(5);
+  expect(await mobileQuickActions.evaluateAll((buttons) =>
+    buttons.every((button) => (button as HTMLButtonElement).disabled),
+  )).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  const input = page.locator(".xterm-helper-textarea");
+  const readGuestSize = async (label: string) => {
+    await input.click();
+    await page.keyboard.type(`size=$(stty size); printf '${label}=%s\\n' "$size"`);
+    await page.keyboard.press("Enter");
+    let dimensions: [number, number] | null = null;
+    await expect.poll(async () => {
+      const rows = await screen.locator(".xterm-rows > div").allTextContents();
+      dimensions = readLabeledSize(rows, label);
+      return dimensions !== null;
+    }).toBe(true);
+    if (!dimensions) throw new Error(`Guest did not report terminal dimensions for ${label}`);
+    return dimensions;
+  };
+  const wideSize = await readGuestSize("TERM_WIDE");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrowSize = await readGuestSize("TERM_NARROW");
+  expect(narrowSize[1]).toBeLessThan(wideSize[1]);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("link", { name: "[RU]" }).click();
+  await expect(page).toHaveURL(/\/ru$/);
+  await input.click();
+  await page.keyboard.type("tour");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Тур", { timeout: 30_000 });
+  expect(page.workers()).toHaveLength(1);
+  await page.getByRole("link", { name: "[EN]" }).click();
+  await expect(page).toHaveURL(/\/en$/);
+  await input.click();
+  await page.keyboard.type("tour");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Tour", { timeout: 30_000 });
+  expect(page.workers()).toHaveLength(1);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(mobileClear).toBeDisabled();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(mobileClearDom).toBeHidden();
+  expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+  const origin = new URL(page.url()).origin;
+  expect(workerUrls.length).toBeGreaterThan(0);
+  expect(workerUrls.every((url) => new URL(url).origin === origin)).toBe(true);
+  expect(wasmUrls.some((url) => new URL(url).pathname.endsWith("/v86.wasm"))).toBe(true);
+  expect(wasmUrls.every((url) => new URL(url).origin === origin)).toBe(true);
+
+  await input.click();
+  await page.keyboard.type("printf 'Привет Linux\\n' | tee /tmp/os-preview.txt | tr 'a-z' 'A-Z' > /tmp/os-preview.upper; pipeStatus=$?; cat /tmp/os-preview.txt /tmp/os-preview.upper; printf 'PIPE_EXIT=%d\\n' \"$pipeStatus\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("Привет Linux", { timeout: 30_000 });
+  await expect(screen).toContainText("Привет LINUX", { timeout: 30_000 });
+  await expect(screen).toContainText("PIPE_EXIT=0", { timeout: 30_000 });
+  await input.click();
+  await page.keyboard.type("printf 'A\\rB\\nC\\r\\nD\\n'");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("D", { timeout: 30_000 });
+  const rows = await screen.locator(".xterm-rows > div").evaluateAll((elements) => elements.map((element) => element.textContent ?? ""));
+  expect(rows.some((line) => line.trim() === "B")).toBe(true);
+  expect(rows.some((line) => line.startsWith(" ") && line.trim() === "C")).toBe(true);
+
+
+  await page.keyboard.type("sleep 30 & sleep_pid=$!; printf 'INTERRUPT_READY\\n'; wait \"$sleep_pid\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("INTERRUPT_READY", { timeout: 30_000 });
+  await page.keyboard.press("Control+C");
+  await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
+  const lessMonitor = guestResizeMonitor("LESS");
+  await input.click();
+  await page.keyboard.type(`${lessMonitor.start}; for i in {1..100}; do echo LESS_LINE_$i; done > /tmp/less.txt; LESS='' less /tmp/less.txt; ${lessMonitor.stop}`);
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("LESS_LINE_1", { timeout: 30_000 });
+  await expect(screen.locator(".xterm-rows > div")).toHaveCount(wideSize[0], { timeout: 30_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(screen.locator(".xterm-rows > div")).toHaveCount(narrowSize[0], { timeout: 30_000 });
+  await page.keyboard.press("q");
+  let lessSizes: [number, number][] = [];
+  await expect.poll(async () => {
+    const rows = await screen.locator(".xterm-rows > div").allTextContents();
+    lessSizes = readLabeledSizes(rows, "LESS_SIZE");
+    return lessSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
+      && lessSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+  }, { timeout: 30_000 }).toBe(true);
+  await input.click();
+  await page.keyboard.type("printf 'AFTER_LESS=%s\\n' \"$((20+22))\"");
+  await page.keyboard.press("Enter");
+
+  await expect(screen).toContainText("AFTER_LESS=42", { timeout: 30_000 });
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  const nanoMonitor = guestResizeMonitor("NANO");
+  await input.click();
+  await page.keyboard.type(`printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; ${nanoMonitor.start}; nano /tmp/preview.txt; ${nanoMonitor.stop}`);
+  await page.keyboard.press("Enter");
+  const nanoRows = screen.locator(".xterm-rows > div");
+  await expect.poll(async () => {
+    const renderedRows = await nanoRows.allTextContents();
+    return renderedRows.some((line) => /GNU nano/.test(line))
+      && renderedRows.some((line) => line.includes("^X Exit"))
+      && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
+  }, { timeout: 30_000 }).toBe(true);
+  await expect(nanoRows).toHaveCount(wideSize[0], { timeout: 30_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(nanoRows).toHaveCount(narrowSize[0], { timeout: 30_000 });
+  await expect.poll(async () => {
+    const renderedRows = await nanoRows.allTextContents();
+    return renderedRows.some((line) => /GNU nano/.test(line))
+      && renderedRows.some((line) => line.includes("^X Exit"))
+      && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
+  }, { timeout: 30_000 }).toBe(true);
+  await page.keyboard.press("Control+X");
+  let nanoSizes: [number, number][] = [];
+  await expect.poll(async () => {
+    const rows = await screen.locator(".xterm-rows > div").allTextContents();
+    nanoSizes = readLabeledSizes(rows, "NANO_SIZE");
+    return nanoSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
+      && nanoSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+  }, { timeout: 30_000 }).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await input.click();
+  await page.keyboard.type("printf 'AFTER_NANO=%s\\n' \"$(cat /tmp/preview.txt)\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("AFTER_NANO=EDITOR_TEXT", { timeout: 30_000 });
+});
+
+test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
+  test.setTimeout(240_000);
+  await requireGeneratedGuestManifest(page);
+  const workerUrls: string[] = [];
+  let fallbackRequested = false;
+  const malformedPrimary = Buffer.from([0xff, 0x00, 0x01]);
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/v86/v86-fallback.wasm")) fallbackRequested = true;
+  });
+  await page.route("**/browser-os/**/manifest.json", async (route) => {
+    const response = await route.fetch();
+    const manifest = await response.json();
+    manifest.assets["v86/v86.wasm"] = {
+      bytes: malformedPrimary.byteLength,
+      sha256: createHash("sha256").update(malformedPrimary).digest("hex"),
+    };
+    await route.fulfill({ response, json: manifest });
+  });
+  await page.route("**/browser-os/**/v86/v86.wasm", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/wasm",
+    body: malformedPrimary,
+  }));
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByRole("status").filter({
+    hasText: "Verified fallback WASM selected after primary initialization failed.",
+  })).toBeVisible();
+  expect(fallbackRequested).toBe(true);
+  expect(workerUrls.length).toBeGreaterThan(0);
+  const screen = page.locator(".xterm-screen");
+  await page.locator(".xterm-helper-textarea").click();
+  await page.keyboard.type("printf 'fallback-pid=%s\\n' \"$$\"; printf 'FALLBACK_RESULT=%s\\n' \"$((6*7))\"");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText(/fallback-pid=\d+/, { timeout: 30_000 });
+  await expect(screen).toContainText("FALLBACK_RESULT=42", { timeout: 30_000 });
+});
+
+test("opt-in guest native actions expose truthful open and clipboard feedback", async ({ page }) => {
+  test.setTimeout(240_000);
+  await requireGeneratedGuestManifest(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new DOMException("denied", "NotAllowedError")) },
+    });
+    window.open = (() => { throw new DOMException("blocked", "NotAllowedError"); }) as typeof window.open;
+  });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+
+  const input = page.locator(".xterm-helper-textarea");
+  await input.click();
+  await page.keyboard.type("open cv.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests opening: quick-cv", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "The link was rejected." })).toBeVisible();
+
+  await page.evaluate(() => {
+    window.open = (() => null) as typeof window.open;
+  });
+  await input.click();
+  await page.keyboard.type("open cv.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests opening: quick-cv", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({
+    hasText: "Open request sent; browser popup settings may block it.",
+  })).toBeVisible();
+
+  await input.click();
+  await page.keyboard.type("copy-contact");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests copying the contact", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Clipboard copy failed." })).toBeVisible();
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.resolve() },
+    });
+  });
+  await input.click();
+  await page.keyboard.type("copy-contact");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Guest requests copying the contact", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Contact copied." })).toBeVisible();
+});
+
+test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
+  test.setTimeout(360_000);
+  await requireGeneratedGuestManifest(page);
+  let workerCreations = 0;
+  page.on("worker", () => { workerCreations += 1; });
+  await page.goto("/en");
+  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  expect(page.workers()).toHaveLength(1);
+  for (let reset = 0; reset < 2; reset += 1) {
+    const workerCountBeforeReset = workerCreations;
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
+    await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+    expect(page.workers()).toHaveLength(1);
+  }
+
+  await page.evaluate(() => {
+    history.pushState({}, "", "/__terminal-away");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.getByText("404 Page Not Found")).toBeVisible();
+  await expect.poll(() => page.workers().length).toBe(0);
+});

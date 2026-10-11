@@ -5,6 +5,9 @@ import path from "path";
 import { metaImagesPlugin } from "./vite-plugin-meta-images";
 
 export default defineConfig({
+  worker: {
+    format: "es",
+  },
   plugins: [
     react(),
     tailwindcss(),
