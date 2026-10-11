@@ -1,0 +1,207 @@
+--- a/Src/main.c
++++ b/Src/main.c
+@@ -86,9 +86,29 @@
+ /**/
+ #endif /* __CYGWIN__ */
+ 
++static void
++protect_browser_os_control_fd(void)
++{
++    char *text = getenv("ZSH_BROWSER_OS_CONTROL_FD");
++    char *end;
++    long fd;
++    int flags;
++
++    if (!text || !*text)
++	return;
++    errno = 0;
++    fd = strtol(text, &end, 10);
++    if (errno || *end || fd <= 2 || fd > 65535)
++	return;
++    flags = fcntl((int)fd, F_GETFD);
++    if (flags >= 0)
++	(void)fcntl((int)fd, F_SETFD, flags | FD_CLOEXEC);
++}
++
+ /**/
+ int
+ main(int argc, char **argv)
+ {
++    protect_browser_os_control_fd();
+     return (zsh_main(argc, argv));
+ }
+--- a/Src/Zle/zle_main.c
++++ b/Src/Zle/zle_main.c
+@@ -29,6 +29,10 @@
+ 
+ #include "zle.mdh"
+ #include "zle_main.pro"
++#include <sys/socket.h>
++#ifndef MSG_NOSIGNAL
++# define MSG_NOSIGNAL 0
++#endif
+ 
+ #ifdef HAVE_POLL_H
+ # include <poll.h>
+@@ -336,7 +340,52 @@
+ 
+ static char *kungetbuf;
+ static int kungetsz;
+ 
++/*
++ * Raw terminal bytes read by getbyte().  A byte returned from kungetbuf is
++ * deliberately not counted again: it is an already-read byte being replayed.
++ */
++/**/
++mod_export unsigned long long browser_os_input_ordinal;
++/**/
++mod_export int browser_os_multibyte_pending;
++/**/
++mod_export int
++browser_os_clean_prompt(void)
++{
++    return zleactive && zlecontext == ZLCON_LINE_START && !zle_recursive &&
++	!zlell && !zlecs && !kungetct && !browser_os_multibyte_pending &&
++	!localkeymap && curkeymapname && !strcmp(curkeymapname, "main") &&
++	!incompctlfunc && !errflag && !retflag && !breaks && !exit_pending &&
++	tcgetpgrp(SHTTY) == mypgrp;
++}
++static int browser_os_control_fd = -1;
++
++static void
++browser_os_report_safe_point(void)
++{
++    unsigned char record[16];
++    unsigned long long ordinal = browser_os_input_ordinal;
++    int i;
++
++    if (browser_os_control_fd < 0)
++	return;
++    memcpy(record, "BOSZ", 4);
++    record[4] = 1;
++    record[5] = 1;
++    record[6] = browser_os_clean_prompt() ? 1 : 0;
++    record[7] = 0;
++    for (i = 15; i >= 8; i--) {
++	record[i] = ordinal & 0xff;
++	ordinal >>= 8;
++    }
++    if (send(browser_os_control_fd, record, sizeof(record), MSG_NOSIGNAL) !=
++	sizeof(record)) {
++	close(browser_os_control_fd);
++	browser_os_control_fd = -1;
++    }
++}
++
+ /*
+  * Note on ungetbyte and ungetbytes for the confused (pws):
+  * these are low level and deal with bytes before they
+@@ -889,8 +937,11 @@
+ 		    *timeout = 1;
+ 		return lastchar = EOF;
+ 	    }
+-	    if (r == 1)
++	    if (r == 1) {
++		if (browser_os_input_ordinal != ~0ULL)
++		    browser_os_input_ordinal++;
+ 		break;
++	    }
+ 	    if (r == 0) {
+ 		/* The test for IGNOREEOF was added to make zsh ignore ^Ds
+ 		   that were typed while commands were running.  Unfortunately
+@@ -1004,6 +1055,7 @@
+     if (inchar == EOF) {
+ 	/* End of input, so reset the shift state. */
+ 	memset(&mbs, 0, sizeof mbs);
++	browser_os_multibyte_pending = 0;
+ 	return lastchar_wide = WEOF;
+     }
+ 
+@@ -1018,10 +1070,14 @@
+ 	     * Invalid input.  Hmm, what's the right thing to do here?
+ 	     */
+ 	    memset(&mbs, 0, sizeof mbs);
++	    browser_os_multibyte_pending = 0;
+ 	    return lastchar_wide = WEOF;
+ 	}
+-	if (cnt != MB_INCOMPLETE)
++	if (cnt != MB_INCOMPLETE) {
++	    browser_os_multibyte_pending = 0;
+ 	    break;
++	}
++	browser_os_multibyte_pending = 1;
+ 
+ 	/*
+ 	 * Always apply KEYTIMEOUT to the remains of the input
+@@ -1034,6 +1090,7 @@
+ 	lastchar_wide_valid = 1;
+ 	if (inchar == EOF) {
+ 	    memset(&mbs, 0, sizeof mbs);
++	    browser_os_multibyte_pending = 0;
+ 	    if (timeout)
+ 	    {
+ 		/*
+@@ -1125,6 +1182,7 @@
+      */
+     while (!done && !errflag && !exit_pending) {
+ 	UNMETACHECK();
++	browser_os_report_safe_point();
+ 
+ 	statusline = NULL;
+ 	vilinerange = 0;
+@@ -2216,6 +2274,21 @@
+ setup_(UNUSED(Module m))
+ {
+     char **bpaste;
++    char *browser_fd_text, *browser_fd_end;
++    long browser_fd_value;
++
++    browser_fd_text = getenv("ZSH_BROWSER_OS_CONTROL_FD");
++    if (browser_fd_text) {
++	errno = 0;
++	browser_fd_value = strtol(browser_fd_text, &browser_fd_end, 10);
++	if (!errno && *browser_fd_text && !*browser_fd_end &&
++	    browser_fd_value > 2 && browser_fd_value <= 65535) {
++	    int flags = fcntl((int)browser_fd_value, F_GETFD);
++	    if (flags >= 0 &&
++		fcntl((int)browser_fd_value, F_SETFD, flags | FD_CLOEXEC) >= 0)
++		browser_os_control_fd = (int)browser_fd_value;
++	}
++    }
+ 
+     /* Set up editor entry points */
+     zle_entry_ptr = zle_main_entry;
+--- a/Src/Zle/zle_keymap.c
++++ b/Src/Zle/zle_keymap.c
+@@ -117,6 +117,7 @@
+ /* local functions */
+ 
+ #include "zle_keymap.pro"
++extern int browser_os_multibyte_pending;
+ 
+ /* currently selected keymap, and its name */
+ 
+@@ -1543,6 +1544,7 @@
+ 	    lastchar_wide_valid = 1;
+ 	    if (inchar == EOF) {
+ 		memset(&mbs, 0, sizeof mbs);
++		browser_os_multibyte_pending = 0;
+ 		if (timeout)
+ 		{
+ 		    /*
+@@ -1567,10 +1569,14 @@
+ 	     * Invalid input.  Hmm, what's the right thing to do here?
+ 	     */
+ 	    memset(&mbs, 0, sizeof mbs);
++	    browser_os_multibyte_pending = 0;
+ 	    return lastchar_wide = WEOF;
+ 	}
+-	if (cnt != MB_INCOMPLETE)
++	if (cnt != MB_INCOMPLETE) {
++	    browser_os_multibyte_pending = 0;
+ 	    break;
++	}
++	browser_os_multibyte_pending = 1;
+     }
+     return lastchar_wide = (ZLE_INT_T)outchar;
+ }
