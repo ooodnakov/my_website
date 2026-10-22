@@ -226,6 +226,7 @@ def main() -> None:
                 },
                 "seabios": {
                     "repository": "https://git.seabios.org/seabios.git",
+                    "fetchMirror": "https://github.com/coreboot/seabios.git",
                     "version": "rel-1.16.2",
                     "commit": seabios_commit,
                     "sourceArchive": "licenses/seabios-rel-1.16.2-source.tar.gz",
