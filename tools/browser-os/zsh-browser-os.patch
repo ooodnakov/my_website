@@ -43,12 +43,10 @@
  
  #ifdef HAVE_POLL_H
  # include <poll.h>
-@@ -336,7 +340,52 @@
- 
- static char *kungetbuf;
+@@ -338,6 +342,51 @@
  static int kungetsz;
  
-+/*
+ /*
 + * Raw terminal bytes read by getbyte().  A byte returned from kungetbuf is
 + * deliberately not counted again: it is an already-read byte being replayed.
 + */
@@ -93,10 +91,11 @@
 +    }
 +}
 +
- /*
++/*
   * Note on ungetbyte and ungetbytes for the confused (pws):
   * these are low level and deal with bytes before they
-@@ -889,8 +937,11 @@
+  * have been converted into (possibly wide) characters.
+@@ -889,8 +938,11 @@
  		    *timeout = 1;
  		return lastchar = EOF;
  	    }
@@ -108,8 +107,8 @@
 +	    }
  	    if (r == 0) {
  		/* The test for IGNOREEOF was added to make zsh ignore ^Ds
- 		   that were typed while commands were running.  Unfortunately
-@@ -1004,6 +1055,7 @@
+ 		   that were typed while commands are running.  Unfortunately
+@@ -1004,6 +1056,7 @@
      if (inchar == EOF) {
  	/* End of input, so reset the shift state. */
  	memset(&mbs, 0, sizeof mbs);
@@ -117,7 +116,7 @@
  	return lastchar_wide = WEOF;
      }
  
-@@ -1018,10 +1070,14 @@
+@@ -1018,10 +1071,14 @@
  	     * Invalid input.  Hmm, what's the right thing to do here?
  	     */
  	    memset(&mbs, 0, sizeof mbs);
@@ -133,7 +132,7 @@
  
  	/*
  	 * Always apply KEYTIMEOUT to the remains of the input
-@@ -1034,6 +1090,7 @@
+@@ -1034,6 +1091,7 @@
  	lastchar_wide_valid = 1;
  	if (inchar == EOF) {
  	    memset(&mbs, 0, sizeof mbs);
@@ -141,7 +140,7 @@
  	    if (timeout)
  	    {
  		/*
-@@ -1125,6 +1182,7 @@
+@@ -1125,6 +1183,7 @@
       */
      while (!done && !errflag && !exit_pending) {
  	UNMETACHECK();
@@ -149,7 +148,7 @@
  
  	statusline = NULL;
  	vilinerange = 0;
-@@ -2216,6 +2274,21 @@
+@@ -2216,6 +2275,21 @@
  setup_(UNUSED(Module m))
  {
      char **bpaste;
