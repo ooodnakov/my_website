@@ -5,7 +5,7 @@
 # to resolve against a different snapshot instead of silently drifting.
 #
 # index main sha256 80afc2122dceb72ab1334a36ff4f70a1e866c34812f8a641474f6e8c86a9058a
-# index community sha256 b283995953cff78a0c3b28043fbde1ae98a2f5cd77b3378e8aa0a1cc62296d5f
+# index community sha256 aec188e7a7a6e7986ef92f4995cc0f6f7a6767a085c01ad91c00dc8c7a192a6d
 #
 # The guest root is a minirootfs release; pinning an older one against this
 # snapshot leaves the base packages on the previous release.
@@ -15,7 +15,7 @@
 # The manifest resolves every installed package back to an APKBUILD, so the
 # recipe revisions must come from the snapshot that built these versions.
 # aports main 8f82aba1fb0e7f7aacc75a166d4032ef03cba691
-# aports community 220a7ab3ba8de1c79bffebd42c2f86a9baff6b2f
+# aports community 2f7cf36f2ec208bb95d5ba56ae115dc3abc74591
 #
 # Regenerate with tools/browser-os/refresh-packages-lock.sh and review the
 # resulting version bump as part of the change that needs it.

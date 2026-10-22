@@ -14,8 +14,8 @@ APORTS_REPOSITORY = "https://gitlab.alpinelinux.org/alpine/aports"
 APORTS_BRANCH = "3.24-stable"
 APORTS_COMMITS = {
     "main": "8f82aba1fb0e7f7aacc75a166d4032ef03cba691",
-    "community": "220a7ab3ba8de1c79bffebd42c2f86a9baff6b2f",
-    "testing": "220a7ab3ba8de1c79bffebd42c2f86a9baff6b2f",
+    "community": "2f7cf36f2ec208bb95d5ba56ae115dc3abc74591",
+    "testing": "2f7cf36f2ec208bb95d5ba56ae115dc3abc74591",
 }
 APORTS_RECIPE_OVERRIDES = {
     "openssl": ("main", "8f82aba1fb0e7f7aacc75a166d4032ef03cba691"),
