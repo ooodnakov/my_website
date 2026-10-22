@@ -7,14 +7,10 @@ ROOTFS="$WORK/rootfs"
 V86_SOURCE="$WORK/v86"
 V86_COMMIT=2d6f9aaa0d5357595cd7d7dd93065987ec1445b5
 SEABIOS_COMMIT=ea1b7a0733906b8425d948ae94fba63c32b1d425
-ALPINE_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minirootfs-3.24.2-x86.tar.gz
-ALPINE_SHA256=757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226
+ALPINE_BRANCH_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
-APORTS_MAIN_COMMIT=d5a34efc88bbe8d18737fda28125071c4aef8517
-APORTS_COMMUNITY_COMMIT=7805e4fb29efc937492a3173e55dc72ecd9fcdaf
-APORTS_OPENSSL_COMMIT=013edf8b29199933e8ea34dde460b5584b979042
-APORTS_KERNEL_COMMIT=52fae6d7d56f3958f32e5bf9121a7536524b9ef4
+
 SOURCE_DATE_EPOCH=1767225600
 export SOURCE_DATE_EPOCH
 
@@ -25,13 +21,23 @@ rm -rf "$WORK"
 mkdir -p "$ROOTFS" "$ROOTFS/tmp/mkinitfs-stage" "$OUT/alpine/9p/blob" "$OUT/alpine" "$OUT/v86" "$OUT/licenses"
 printf '%s\n' "__BROWSER_OS_TMPFS_FSID__=$(stat -f -c %i /tmp/browser-os-initramfs)"
 
+PACKAGES_LOCK=/usr/local/share/browser-os/packages.lock
+[ -f "$PACKAGES_LOCK" ] || fail "missing $PACKAGES_LOCK"
+
+# The minirootfs release is part of the same snapshot as the package pins: an
+# older root leaves the base packages on the previous release and the manifest
+# cannot resolve them against this snapshot's recipes.
+ALPINE_URL=$(sed -n 's/^# minirootfs url //p' "$PACKAGES_LOCK")
+ALPINE_SHA256=$(sed -n 's/^# minirootfs .* sha256 //p' "$PACKAGES_LOCK")
+[ -n "$ALPINE_URL" ] && [ -n "$ALPINE_SHA256" ] ||
+  fail "packages.lock records no minirootfs; regenerate it with tools/browser-os/refresh-packages-lock.sh"
 wget -q "$ALPINE_URL" -O "$WORK/alpine-minirootfs.tar.gz"
 actual_alpine_sha=$(sha256sum "$WORK/alpine-minirootfs.tar.gz" | cut -d ' ' -f 1)
 [ "$actual_alpine_sha" = "$ALPINE_SHA256" ] || fail "Alpine minirootfs sha256 mismatch: $actual_alpine_sha"
 tar -xzf "$WORK/alpine-minirootfs.tar.gz" -C "$ROOTFS"
 printf '%s\n' \
-  'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
-  'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
+  "$ALPINE_BRANCH_URL/main" \
+  "$ALPINE_BRANCH_URL/community" \
   > "$ROOTFS/etc/apk/repositories"
 
 # PRoot's explicit qemu user-mode path executes x86 binaries without binfmt,
@@ -40,21 +46,39 @@ cd /
 PROOT_NET='proot -0 -q qemu-i386 -b /etc/resolv.conf:/etc/resolv.conf -r /tmp/browser-os-build/rootfs'
 PROOT='proot -0 -q qemu-i386 -b /tmp/browser-os-initramfs:/tmp/mkinitfs-stage -r /tmp/browser-os-build/rootfs'
 $PROOT_NET /sbin/apk update
+# Alpine release branches are mutable: a security update removes the superseded
+# version from the CDN, so the pins below can stop being selectable. apk has
+# already cached the index it resolved against, so hash that cache and fail at
+# the cause instead of letting apk report a solver conflict naming packages.
+/usr/local/bin/verify-packages-index.sh "$PACKAGES_LOCK" "$ROOTFS/var/cache/apk"
 set --
 while IFS= read -r package; do
   case "$package" in ''|'#'*) continue ;; esac
   set -- "$@" "$package"
-done < /usr/local/share/browser-os/packages.lock
+done < "$PACKAGES_LOCK"
 $PROOT_NET /sbin/apk --no-scripts add "$@"
 APORTS_SOURCE="$WORK/aports"
 # GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
 APORTS_MIRROR=https://github.com/alpinelinux/aports.git
 git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_KERNEL_COMMIT"
-git -C "$APORTS_SOURCE" checkout --detach "$APORTS_COMMUNITY_COMMIT"
+# source_provenance.py owns the aports revisions the manifest resolves against;
+# duplicating them here let the clone and the manifest drift apart.
+aports_commits() {
+  python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_COMMITS, APORTS_RECIPE_OVERRIDES
+for commit in sorted(set(APORTS_COMMITS.values()) | {c for _area, c in APORTS_RECIPE_OVERRIDES.values()}):
+    print(commit)'
+}
+for commit in $(aports_commits); do
+  git -C "$APORTS_SOURCE" fetch --depth=1 origin "$commit"
+done
+git -C "$APORTS_SOURCE" checkout --detach "$(
+  python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_COMMITS
+print(APORTS_COMMITS["community"])'
+)"
 [ -d /input/portfolio/en ] && [ -d /input/portfolio/ru ] || fail 'canonical portfolio exports are missing'
 mkdir -p "$ROOTFS/portfolio"
 cp -R /input/portfolio/. "$ROOTFS/portfolio/"
@@ -168,7 +192,7 @@ tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owne
 cp "$ROOTFS/boot/vmlinuz-virt" "$OUT/alpine/vmlinuz"
 cp "$ROOTFS/boot/initramfs-virt" "$OUT/alpine/initramfs"
 rm -rf "$ROOTFS/boot"
-cp /usr/local/share/browser-os/packages.lock "$OUT/alpine/packages.lock"
+cp "$PACKAGES_LOCK" "$OUT/alpine/packages.lock"
 
 # Do not ship stale APK indexes or cache payloads in the guest filesystem.
 rm -rf "$ROOTFS/var/cache/apk" "$ROOTFS/var/log/apk.log"

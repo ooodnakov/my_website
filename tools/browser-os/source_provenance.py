@@ -13,13 +13,12 @@ import urllib.parse
 APORTS_REPOSITORY = "https://gitlab.alpinelinux.org/alpine/aports"
 APORTS_BRANCH = "3.24-stable"
 APORTS_COMMITS = {
-    "main": "d5a34efc88bbe8d18737fda28125071c4aef8517",
-    "community": "7805e4fb29efc937492a3173e55dc72ecd9fcdaf",
-    "testing": "7805e4fb29efc937492a3173e55dc72ecd9fcdaf",
+    "main": "058e35320f81c4f8803a445d206ac7d3f5a5f8d2",
+    "community": "b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4",
+    "testing": "b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4",
 }
 APORTS_RECIPE_OVERRIDES = {
-    "linux-lts": ("main", "52fae6d7d56f3958f32e5bf9121a7536524b9ef4"),
-    "openssl": ("main", "013edf8b29199933e8ea34dde460b5584b979042"),
+    "openssl": ("main", "058e35320f81c4f8803a445d206ac7d3f5a5f8d2"),
 }
 
 

@@ -4,6 +4,7 @@ dist/
 *.log
 .eslintcache
 coverage/
+__pycache__/
 
 apps/**/node_modules/
 apps/**/dist/
