@@ -9,6 +9,7 @@ V86_COMMIT=2d6f9aaa0d5357595cd7d7dd93065987ec1445b5
 SEABIOS_COMMIT=ea1b7a0733906b8425d948ae94fba63c32b1d425
 ALPINE_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minirootfs-3.24.2-x86.tar.gz
 ALPINE_SHA256=757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226
+ALPINE_BRANCH_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
 APORTS_MAIN_COMMIT=d5a34efc88bbe8d18737fda28125071c4aef8517
@@ -24,13 +25,31 @@ rm -rf "$WORK"
 mkdir -p "$ROOTFS" "$ROOTFS/tmp/mkinitfs-stage" "$OUT/alpine/9p/blob" "$OUT/alpine" "$OUT/v86" "$OUT/licenses"
 printf '%s\n' "__BROWSER_OS_TMPFS_FSID__=$(stat -f -c %i /tmp/browser-os-initramfs)"
 
+PACKAGES_LOCK=/usr/local/share/browser-os/packages.lock
+[ -f "$PACKAGES_LOCK" ] || fail "missing $PACKAGES_LOCK"
+
 wget -q "$ALPINE_URL" -O "$WORK/alpine-minirootfs.tar.gz"
 actual_alpine_sha=$(sha256sum "$WORK/alpine-minirootfs.tar.gz" | cut -d ' ' -f 1)
 [ "$actual_alpine_sha" = "$ALPINE_SHA256" ] || fail "Alpine minirootfs sha256 mismatch: $actual_alpine_sha"
 tar -xzf "$WORK/alpine-minirootfs.tar.gz" -C "$ROOTFS"
+
+# Alpine release branches are mutable: a security update removes the superseded
+# version from the CDN, so resolving against the live branch would silently
+# install a different package universe than the lock describes. Download the
+# index, verify it against the snapshot recorded in packages.lock, and point apk
+# at that verified copy only. PRoot rebinds the rootfs to /, so the repository
+# paths are guest-absolute while the staging directory is host-absolute.
+INDEX_ROOT=/tmp/apk-repo
+for repository in main community; do
+  mkdir -p "$ROOTFS$INDEX_ROOT/$repository/x86"
+  wget -q "$ALPINE_BRANCH_URL/$repository/x86/APKINDEX.tar.gz" \
+    -O "$ROOTFS$INDEX_ROOT/$repository/x86/APKINDEX.tar.gz"
+done
+/usr/local/bin/verify-packages-index.sh "$PACKAGES_LOCK" "$ROOTFS$INDEX_ROOT"
+# The minirootfs ships the live branch list; the verified snapshot replaces it.
 printf '%s\n' \
-  'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
-  'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
+  "file://$INDEX_ROOT/main" \
+  "file://$INDEX_ROOT/community" \
   > "$ROOTFS/etc/apk/repositories"
 
 # PRoot's explicit qemu user-mode path executes x86 binaries without binfmt,
@@ -43,7 +62,7 @@ set --
 while IFS= read -r package; do
   case "$package" in ''|'#'*) continue ;; esac
   set -- "$@" "$package"
-done < /usr/local/share/browser-os/packages.lock
+done < "$PACKAGES_LOCK"
 $PROOT_NET /sbin/apk --no-scripts add "$@"
 APORTS_SOURCE="$WORK/aports"
 # GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
@@ -138,10 +157,16 @@ tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owne
 cp "$ROOTFS/boot/vmlinuz-virt" "$OUT/alpine/vmlinuz"
 cp "$ROOTFS/boot/initramfs-virt" "$OUT/alpine/initramfs"
 rm -rf "$ROOTFS/boot"
-cp /usr/local/share/browser-os/packages.lock "$OUT/alpine/packages.lock"
+cp "$PACKAGES_LOCK" "$OUT/alpine/packages.lock"
 
 # Do not ship stale APK indexes or cache payloads in the guest filesystem.
-rm -rf "$ROOTFS/var/cache/apk" "$ROOTFS/var/log/apk.log"
+rm -rf "$ROOTFS/var/cache/apk" "$ROOTFS/var/log/apk.log" "$ROOTFS$INDEX_ROOT"
+# The staged index only existed to resolve the lock; the shipped guest is
+# offline and carries its package provenance in alpine/packages.lock instead.
+cat > "$ROOTFS/etc/apk/repositories" <<'EOF'
+# Browser OS guest: offline and ephemeral. No package repositories are reachable
+# at runtime; the installed set and its provenance ship in alpine/packages.lock.
+EOF
 python3 -c 'import os,pathlib,sys; epoch=int(sys.argv[2]); [os.utime(path,(epoch,epoch),follow_symlinks=False) for path in [pathlib.Path(sys.argv[1]),*pathlib.Path(sys.argv[1]).rglob("*")]]' "$ROOTFS" "$SOURCE_DATE_EPOCH"
 python3 "$V86_SOURCE/tools/fs2json.py" --exclude /boot --exclude /var/cache/apk --zstd --out "$OUT/alpine/9p/fs.json" "$ROOTFS"
 python3 "$V86_SOURCE/tools/copy-to-sha256.py" --zstd "$ROOTFS" "$OUT/alpine/9p/blob"
