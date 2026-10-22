@@ -8,6 +8,12 @@ export default defineConfig({
   worker: {
     format: "es",
   },
+  // The OS worker imports v86, which the dev server discovers only when the
+  // worker module first loads. On-demand discovery reloads the page mid
+  // activation and strands the visitor's first opt-in, so optimize it up front.
+  optimizeDeps: {
+    include: ["v86"],
+  },
   plugins: [
     react(),
     tailwindcss(),

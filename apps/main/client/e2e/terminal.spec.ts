@@ -43,38 +43,78 @@ async function requireGeneratedGuestManifest(page: Page) {
   }
 }
 
-function readForegroundTuiSizes(rows: string[], label: "LESS" | "NANO"): [number, number][] {
+type ForegroundSample = { rows: number; cols: number; pgid: number; shellPgid: number };
+
+function readForegroundTuiSizes(rows: string[], label: "LESS" | "NANO"): ForegroundSample[] {
   const resultPattern = new RegExp(`^${label}_FG_SIZE=\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s*$`);
   return rows.flatMap((row) => {
     const match = resultPattern.exec(row.trim());
-    if (!match || Number(match[3]) === Number(match[4])) return [];
-    return [[Number(match[1]), Number(match[2])] as [number, number]];
+    if (!match) return [];
+    return [{
+      rows: Number(match[1]),
+      cols: Number(match[2]),
+      pgid: Number(match[3]),
+      shellPgid: Number(match[4]),
+    }];
   });
 }
 
-function hasForegroundResize(samples: [number, number][], wide: [number, number], narrow: [number, number]) {
-  return samples.some(([rows, cols]) => rows === wide[0] && cols === wide[1])
-    && samples.some(([rows, cols]) => rows === narrow[0] && cols === narrow[1]);
+// A resize is only proven when the wide and narrow readings belong to one
+// foreground lifetime: the tty belongs to the TUI the visitor is looking at,
+// not to samples taken before entry or after exit, not to two separate TUI
+// runs, and not in reverse order.
+function hasSustainedForegroundResize(
+  samples: ForegroundSample[],
+  wide: [number, number],
+  narrow: [number, number],
+) {
+  const foreground = samples.filter((sample) => sample.pgid !== sample.shellPgid);
+  if (foreground.length === 0) return false;
+  const [lifetime] = foreground;
+  if (foreground.some((sample) => sample.pgid !== lifetime.pgid)) return false;
+  const wideIndex = foreground.findIndex((sample) => sample.rows === wide[0] && sample.cols === wide[1]);
+  const narrowIndex = foreground.findIndex((sample) => sample.rows === narrow[0] && sample.cols === narrow[1]);
+  return wideIndex >= 0 && narrowIndex > wideIndex;
 }
 
+// The monitor records a size only when the same foreground process group is
+// still the tty's foreground group after the read, so a sample can never be
+// attributed to a TUI lifetime that already ended.
 function guestResizeMonitor(label: "LESS" | "NANO") {
   const sizesFile = `/tmp/${label.toLowerCase()}-sizes`;
   return {
-    start: `: > ${sizesFile}; shell_pid=$$; read -r proc_pid proc_name proc_state parent_pid shell_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat"; (while :; do read -r proc_pid proc_name proc_state parent_pid current_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ "$foreground_pgrp" != "$shell_pgrp" ]; then size=$(stty size </dev/tty 2>/dev/null); if [ -n "$size" ]; then printf '%s %s %s\\n' "$size" "$foreground_pgrp" "$shell_pgrp" >> ${sizesFile}; fi; fi; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
+    start: `: > ${sizesFile}; shell_pid=$$; read -r proc_pid proc_name proc_state parent_pid shell_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat"; (while :; do read -r proc_pid proc_name proc_state parent_pid sample_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ "$foreground_pgrp" != "$shell_pgrp" ]; then size=$(stty size </dev/tty 2>/dev/null); read -r proc_pid proc_name proc_state parent_pid later_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ -n "$size" ] && [ "$later_pgrp" = "$sample_pgrp" ] && [ "$foreground_pgrp" = "$sample_pgrp" ]; then printf '%s %s %s\\n' "$size" "$sample_pgrp" "$shell_pgrp" >> ${sizesFile}; fi; fi; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
     stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; while IFS= read -r size; do printf '${label}_FG_SIZE=%s\\n' "$size"; done < ${sizesFile}`,
   };
 }
 
-test("active-TUI resize selection rejects samples outside the foreground lifetime", () => {
+async function renderedTokensInRow(rows: Locator, marker: string, token: RegExp) {
+  const lines = await rows.allTextContents();
+  const line = lines.find((text) => text.includes(marker));
+  return line ? (line.match(token) ?? []).length : 0;
+}
+
+test("active-TUI resize selection requires one ordered foreground lifetime", () => {
   const wide: [number, number] = [42, 120];
   const narrow: [number, number] = [24, 40];
-  const beforeEntryAndAfterExit = ["LESS_SIZE=42 120", "LESS_SIZE=24 40"];
-  expect(hasForegroundResize(readForegroundTuiSizes(beforeEntryAndAfterExit, "LESS"), wide, narrow)).toBe(false);
-  expect(hasForegroundResize(readForegroundTuiSizes([
-    "LESS_FG_SIZE=42 120 701 700",
-    "LESS_FG_SIZE=24 40 701 700",
-  ], "LESS"), wide, narrow)).toBe(true);
-  expect(readForegroundTuiSizes(["NANO_FG_SIZE=42 120 700 700"], "NANO")).toEqual([]);
+  const read = (rows: string[]) => readForegroundTuiSizes(rows, "LESS");
+  const accepts = (samples: ForegroundSample[]) => hasSustainedForegroundResize(samples, wide, narrow);
+
+  // Sizes collected before the TUI starts and after it exits are not TUI readings.
+  expect(accepts(read(["LESS_SIZE=42 120", "LESS_SIZE=24 40"]))).toBe(false);
+  // Two unrelated foreground process groups are two lifetimes, not one resize.
+  expect(accepts(read(["LESS_FG_SIZE=42 120 701 700", "LESS_FG_SIZE=24 40 702 700"]))).toBe(false);
+  // The shell's own group is never the foreground group.
+  expect(accepts(read(["LESS_FG_SIZE=42 120 700 700", "LESS_FG_SIZE=24 40 700 700"]))).toBe(false);
+  // Narrowing first, widening later is the opposite of the resize under test.
+  expect(accepts(read(["LESS_FG_SIZE=24 40 701 700", "LESS_FG_SIZE=42 120 701 700"]))).toBe(false);
+  // Only one of the two geometries was observed.
+  expect(accepts(read(["LESS_FG_SIZE=42 120 701 700"]))).toBe(false);
+  // A sustained wide-then-narrow lifetime in one group is the accepted shape.
+  expect(accepts(read(["LESS_FG_SIZE=42 120 701 700", "LESS_FG_SIZE=24 40 701 700"]))).toBe(true);
+  expect(readForegroundTuiSizes(["NANO_FG_SIZE=42 120 700 700"], "NANO")).toEqual([
+    { rows: 42, cols: 120, pgid: 700, shellPgid: 700 },
+  ]);
 });
 
 
@@ -455,11 +495,16 @@ test("cold opt-in requests a missing manifest and returns to lightweight mode ac
   const manifestRequests: Request[] = [];
   const workerUrls: string[] = [];
   const runtimeErrors: string[] = [];
+  const navigationsAfterOptIn: string[] = [];
+  let activated = false;
   context.on("request", (request) => {
     if (new URL(request.url()).pathname === expectedManifestPath) manifestRequests.push(request);
   });
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   page.on("worker", (worker) => workerUrls.push(worker.url()));
+  page.on("framenavigated", (frame) => {
+    if (activated && frame.parentFrame() === null) navigationsAfterOptIn.push(frame.url());
+  });
   await context.route(`**${expectedManifestPath}`, (route) => route.fulfill({
     status: 404,
     contentType: "application/json",
@@ -471,21 +516,29 @@ test("cold opt-in requests a missing manifest and returns to lightweight mode ac
   await expect(optIn).toBeVisible();
 
   for (const expectedCount of [1, 2]) {
+    activated = true;
     await optIn.click();
     const stop = page.getByRole("button", { name: "Stop · lightweight mode" });
     await expect(stop).toBeVisible({ timeout: 15_000 });
     await expect.poll(
       () => manifestRequests.length,
-      { timeout: 15_000, message: `manifest requests ${manifestRequests.length}; workers: ${workerUrls.join(", ") || "none"}; page errors: ${runtimeErrors.join("; ") || "none"}` },
+      {
+        timeout: 15_000,
+        message: () => `manifest requests ${manifestRequests.length}; expected ${expectedCount}; workers: ${workerUrls.join(", ") || "none"}; navigations after opt-in: ${navigationsAfterOptIn.join(", ") || "none"}; page errors: ${runtimeErrors.join("; ") || "none"}`,
+      },
     ).toBe(expectedCount);
     const response = await manifestRequests[expectedCount - 1].response();
     expect(response?.status()).toBe(404);
     await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
+    await expect(stop).toBeVisible();
     await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
     await expect(optIn).toBeVisible();
   }
   expect(manifestRequests).toHaveLength(2);
+  // A dev-server reload mid-activation discards the session before its worker
+  // requests the manifest, so cold opt-in must not navigate the page.
+  expect(navigationsAfterOptIn).toEqual([]);
 });
 
 test("the opt-in worker rejects an unpinned guest manifest before requesting assets", async ({ page }) => {
@@ -623,21 +676,32 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await page.keyboard.type("printf 'INTERRUPT_EXIT=%d\\n' \"$?\"");
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("INTERRUPT_EXIT=130", { timeout: 30_000 });
+  await input.click();
+  await page.keyboard.type("for i in $(seq 0 39); do printf 'WRAP%02d ' \"$i\"; done > /tmp/less.txt; for i in {1..100}; do echo LESS_LINE_$i; done >> /tmp/less.txt");
+  await page.keyboard.press("Enter");
   const lessMonitor = guestResizeMonitor("LESS");
   await input.click();
-  await page.keyboard.type(`${lessMonitor.start}; for i in {1..100}; do echo LESS_LINE_$i; done > /tmp/less.txt; LESS='' less /tmp/less.txt; ${lessMonitor.stop}`);
+  await page.keyboard.type(`${lessMonitor.start}; LESS='' less /tmp/less.txt; ${lessMonitor.stop}`);
   await page.keyboard.press("Enter");
   await expect(screen).toContainText("LESS_LINE_1", { timeout: 30_000 });
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(wideSize[0], { timeout: 30_000 });
+  const wideLessTokens = await renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g);
+  expect(wideLessTokens).toBeGreaterThan(6);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(narrowSize[0], { timeout: 30_000 });
   await expect(screen).toContainText("LESS_LINE_1");
+  await expect.poll(
+    () => renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g),
+    { timeout: 30_000 },
+  ).toBeLessThan(wideLessTokens);
+  const narrowLessTokens = await renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g);
+  expect(narrowLessTokens).toBeLessThanOrEqual(6);
   await page.keyboard.press("q");
-  let lessForegroundSizes: [number, number][] = [];
+  let lessForegroundSizes: ForegroundSample[] = [];
   await expect.poll(async () => {
     const rows = await screen.locator(".xterm-rows > div").allTextContents();
     lessForegroundSizes = readForegroundTuiSizes(rows, "LESS");
-    return hasForegroundResize(lessForegroundSizes, wideSize, narrowSize);
+    return hasSustainedForegroundResize(lessForegroundSizes, wideSize, narrowSize);
   }, { timeout: 30_000 }).toBe(true);
   await input.click();
   await page.keyboard.type("printf 'AFTER_LESS=%s\\n' \"$((20+22))\"");
@@ -646,9 +710,12 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await expect(screen).toContainText("AFTER_LESS=42", { timeout: 30_000 });
   await page.setViewportSize({ width: 1280, height: 900 });
 
+  await input.click();
+  await page.keyboard.type("printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; for i in $(seq 0 39); do printf 'WRAP%02d ' \"$i\"; done >> /tmp/preview.txt");
+  await page.keyboard.press("Enter");
   const nanoMonitor = guestResizeMonitor("NANO");
   await input.click();
-  await page.keyboard.type(`printf 'EDITOR_TEXT\\n' > /tmp/preview.txt; ${nanoMonitor.start}; nano /tmp/preview.txt; ${nanoMonitor.stop}`);
+  await page.keyboard.type(`${nanoMonitor.start}; nano /tmp/preview.txt; ${nanoMonitor.stop}`);
   await page.keyboard.press("Enter");
   const nanoRows = screen.locator(".xterm-rows > div");
   await expect.poll(async () => {
@@ -658,6 +725,8 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
       && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
   }, { timeout: 30_000 }).toBe(true);
   await expect(nanoRows).toHaveCount(wideSize[0], { timeout: 30_000 });
+  const wideNanoTokens = await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g);
+  expect(wideNanoTokens).toBeGreaterThan(6);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(nanoRows).toHaveCount(narrowSize[0], { timeout: 30_000 });
   await expect.poll(async () => {
@@ -666,12 +735,17 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
       && renderedRows.some((line) => line.includes("^X Exit"))
       && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
   }, { timeout: 30_000 }).toBe(true);
+  await expect.poll(
+    () => renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g),
+    { timeout: 30_000 },
+  ).toBeLessThan(wideNanoTokens);
+  expect(await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g)).toBeLessThanOrEqual(6);
   await page.keyboard.press("Control+X");
-  let nanoForegroundSizes: [number, number][] = [];
+  let nanoForegroundSizes: ForegroundSample[] = [];
   await expect.poll(async () => {
     const rows = await screen.locator(".xterm-rows > div").allTextContents();
     nanoForegroundSizes = readForegroundTuiSizes(rows, "NANO");
-    return hasForegroundResize(nanoForegroundSizes, wideSize, narrowSize);
+    return hasSustainedForegroundResize(nanoForegroundSizes, wideSize, narrowSize);
   }, { timeout: 30_000 }).toBe(true);
   await page.setViewportSize({ width: 1280, height: 900 });
   await input.click();
