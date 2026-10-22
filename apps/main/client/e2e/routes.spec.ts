@@ -47,7 +47,7 @@ test("legacy files and archive redirect are served", async ({ request }) => {
 
 test("Browser OS release assets are all served with manifest hashes", async ({ request }) => {
   test.setTimeout(120_000);
-  const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
+  const release = "/browser-os/alpine-3.24.3-v86-0.5.469";
   const manifestResponse = await request.get(`${release}/manifest.json`);
   expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
   const manifest = await manifestResponse.json();
@@ -80,12 +80,12 @@ test("Browser OS release assets are all served with manifest hashes", async ({ r
 });
 
 test("Browser OS missing assets return JSON 404 and guest assets revalidate", async ({ request }) => {
-  const missing = await request.get("/browser-os/alpine-3.24.2-v86-0.5.469/v86/missing.wasm");
+  const missing = await request.get("/browser-os/alpine-3.24.3-v86-0.5.469/v86/missing.wasm");
   expect(missing.status()).toBe(404);
   expect(missing.headers()["content-type"]).toContain("application/json");
   expect(await missing.text()).not.toContain("<!doctype html>");
 
-  const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
+  const release = "/browser-os/alpine-3.24.3-v86-0.5.469";
   const manifestResponse = await request.get(`${release}/manifest.json`);
   expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
   const manifest = await manifestResponse.json();

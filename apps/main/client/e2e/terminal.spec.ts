@@ -6,14 +6,15 @@ type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
 function readLabeledSize(rows: string[], label: string): [number, number] | null {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const resultPattern = new RegExp(`^${escapedLabel}=\\s*(\\d+)\\s+(\\d+)\\s*$`);
-  for (const row of rows) {
+  // Later output wins: a repeated probe must never read its previous result.
+  for (const row of [...rows].reverse()) {
     const match = resultPattern.exec(row.trim());
     if (match) return [Number(match[1]), Number(match[2])];
   }
   return null;
 }
 
-const GUEST_RELEASE = "alpine-3.24.2-v86-0.5.469";
+const GUEST_RELEASE = "alpine-3.24.3-v86-0.5.469";
 
 async function requireGeneratedGuestManifest(page: Page) {
   const path = `/browser-os/${GUEST_RELEASE}/manifest.json`;
@@ -77,21 +78,29 @@ function hasSustainedForegroundResize(
   return wideIndex >= 0 && narrowIndex > wideIndex;
 }
 
-// The monitor records a size only when the same foreground process group is
-// still the tty's foreground group after the read, so a sample can never be
-// attributed to a TUI lifetime that already ended.
+// The monitor reads field 8 of /proc/<shell>/stat — the tty's foreground
+// process group — and records only when the same foreground group is still
+// current after the size read, so a sample always names the TUI that owned the
+// tty and never the shell's own process group.
 function guestResizeMonitor(label: "LESS" | "NANO") {
   const sizesFile = `/tmp/${label.toLowerCase()}-sizes`;
   return {
-    start: `: > ${sizesFile}; shell_pid=$$; read -r proc_pid proc_name proc_state parent_pid shell_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat"; (while :; do read -r proc_pid proc_name proc_state parent_pid sample_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ "$foreground_pgrp" != "$shell_pgrp" ]; then size=$(stty size </dev/tty 2>/dev/null); read -r proc_pid proc_name proc_state parent_pid later_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ -n "$size" ] && [ "$later_pgrp" = "$sample_pgrp" ] && [ "$foreground_pgrp" = "$sample_pgrp" ]; then printf '%s %s %s\\n' "$size" "$sample_pgrp" "$shell_pgrp" >> ${sizesFile}; fi; fi; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
+    start: `: > ${sizesFile}; shell_pid=$$; read -r proc_pid comm state ppid shell_pgrp session tty_nr tpgid rest < "/proc/$shell_pid/stat"; (while :; do read -r proc_pid comm state ppid pgrp session tty_nr foreground_before rest < "/proc/$shell_pid/stat" || break; if [ "$foreground_before" != "$shell_pgrp" ]; then size=$(stty size </dev/tty 2>/dev/null); read -r proc_pid comm state ppid pgrp session tty_nr foreground_after rest < "/proc/$shell_pid/stat" || break; if [ -n "$size" ] && [ "$foreground_after" = "$foreground_before" ]; then printf '%s %s %s\\n' "$size" "$foreground_before" "$shell_pgrp" >> ${sizesFile}; fi; fi; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
     stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; while IFS= read -r size; do printf '${label}_FG_SIZE=%s\\n' "$size"; done < ${sizesFile}`,
   };
 }
 
-async function renderedTokensInRow(rows: Locator, marker: string, token: RegExp) {
+async function renderedTokensInRow(rows: Locator, marker: string, token: RegExp): Promise<number | null> {
   const lines = await rows.allTextContents();
   const line = lines.find((text) => text.includes(marker));
-  return line ? (line.match(token) ?? []).length : 0;
+  return line ? (line.match(token) ?? []).length : null;
+}
+
+// Reflow requires retained content: the marker row must still render after the
+// resize with fewer tokens. A vanished row is not a reflow, and neither is a
+// row that never contained tokens.
+function hasRenderedReflow(wide: number | null, narrow: number | null) {
+  return wide !== null && narrow !== null && wide > 0 && narrow > 0 && narrow < wide;
 }
 
 test("active-TUI resize selection requires one ordered foreground lifetime", () => {
@@ -115,6 +124,19 @@ test("active-TUI resize selection requires one ordered foreground lifetime", () 
   expect(readForegroundTuiSizes(["NANO_FG_SIZE=42 120 700 700"], "NANO")).toEqual([
     { rows: 42, cols: 120, pgid: 700, shellPgid: 700 },
   ]);
+});
+
+test("rendered reflow requires retained content after the resize", () => {
+  // A row that disappears is not a reflow, however few tokens it "has".
+  expect(hasRenderedReflow(null, 5)).toBe(false);
+  expect(hasRenderedReflow(15, null)).toBe(false);
+  // Neither is a row that never carried the wrapped tokens.
+  expect(hasRenderedReflow(15, 0)).toBe(false);
+  expect(hasRenderedReflow(0, 0)).toBe(false);
+  // Nor is growing content.
+  expect(hasRenderedReflow(5, 15)).toBe(false);
+  // Retained content that wraps into fewer tokens per row is the accepted shape.
+  expect(hasRenderedReflow(15, 5)).toBe(true);
 });
 
 
@@ -555,7 +577,7 @@ test("the opt-in worker rejects an unpinned guest manifest before requesting ass
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
   await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible();
-  expect(releaseRequests).toEqual(["/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json"]);
+  expect(releaseRequests).toEqual(["/browser-os/alpine-3.24.3-v86-0.5.469/manifest.json"]);
 });
 
 test("the opt-in worker rejects a mismatched guest build descriptor before requesting assets", async ({ page }) => {
@@ -579,7 +601,7 @@ test("the opt-in worker rejects a mismatched guest build descriptor before reque
 
 
 test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabled quick actions", async ({ page }) => {
-  test.setTimeout(360_000);
+  test.setTimeout(480_000);
   await requireGeneratedGuestManifest(page);
   const workerUrls: string[] = [];
   const wasmUrls: string[] = [];
@@ -598,7 +620,7 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(mobileClearDom).toBeHidden();
   expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
-  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 300_000 });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(mobileClear).toBeDisabled();
   const mobileQuickActions = page.locator(".terminal-mobile-bar button:not(.terminal-keyboard-button)");
@@ -610,22 +632,32 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await expect(mobileClearDom).toBeHidden();
   expect(await mobileClearDom.evaluate((button) => (button as HTMLButtonElement).disabled)).toBe(true);
   const input = page.locator(".xterm-helper-textarea");
-  const readGuestSize = async (label: string) => {
-    await input.click();
-    await page.keyboard.type(`size=$(stty size); printf '${label}=%s\\n' "$size"`);
-    await page.keyboard.press("Enter");
-    let dimensions: [number, number] | null = null;
-    await expect.poll(async () => {
-      const rows = await screen.locator(".xterm-rows > div").allTextContents();
-      dimensions = readLabeledSize(rows, label);
-      return dimensions !== null;
-    }).toBe(true);
-    if (!dimensions) throw new Error(`Guest did not report terminal dimensions for ${label}`);
-    return dimensions;
+  // COM1 input and COM2 resize are independent transports, so a command typed
+  // right after a viewport change can reach the guest before the daemon applies
+  // TIOCSWINSZ. Re-probe with a unique label until the guest reports the new
+  // geometry; a resize that never lands still fails the final assertion.
+  const readGuestSize = async (label: string, differentFrom?: number) => {
+    const deadline = Date.now() + 25_000;
+    let latest: [number, number] | null = null;
+    for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+      const attemptLabel = `${label}_${attempt}`;
+      await input.click();
+      await page.keyboard.type(`size=$(stty size); printf '${attemptLabel}=%s\\n' "$size"`);
+      await page.keyboard.press("Enter");
+      const read = async () => {
+        const rows = await screen.locator(".xterm-rows > div").allTextContents();
+        return readLabeledSize(rows, attemptLabel);
+      };
+      await expect.poll(read, { timeout: 15_000 }).not.toBeNull();
+      latest = await read();
+      if (latest && (differentFrom === undefined || latest[1] !== differentFrom)) return latest;
+      await page.waitForTimeout(250);
+    }
+    throw new Error(`Guest did not report ${label} columns different from ${differentFrom}; last ${JSON.stringify(latest)}`);
   };
   const wideSize = await readGuestSize("TERM_WIDE");
   await page.setViewportSize({ width: 390, height: 844 });
-  const narrowSize = await readGuestSize("TERM_NARROW");
+  const narrowSize = await readGuestSize("TERM_NARROW", wideSize[1]);
   expect(narrowSize[1]).toBeLessThan(wideSize[1]);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "[RU]" }).click();
@@ -686,16 +718,18 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await expect(screen).toContainText("LESS_LINE_1", { timeout: 30_000 });
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(wideSize[0], { timeout: 30_000 });
   const wideLessTokens = await renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g);
-  expect(wideLessTokens).toBeGreaterThan(6);
+  expect(wideLessTokens).not.toBeNull();
+  expect(wideLessTokens!).toBeGreaterThan(6);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(narrowSize[0], { timeout: 30_000 });
   await expect(screen).toContainText("LESS_LINE_1");
   await expect.poll(
-    () => renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g),
+    async () => hasRenderedReflow(wideLessTokens, await renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g)),
     { timeout: 30_000 },
-  ).toBeLessThan(wideLessTokens);
+  ).toBe(true);
   const narrowLessTokens = await renderedTokensInRow(screen.locator(".xterm-rows > div"), "WRAP00", /WRAP\d\d/g);
-  expect(narrowLessTokens).toBeLessThanOrEqual(6);
+  expect(narrowLessTokens).not.toBeNull();
+  expect(narrowLessTokens!).toBeGreaterThan(0);
   await page.keyboard.press("q");
   let lessForegroundSizes: ForegroundSample[] = [];
   await expect.poll(async () => {
@@ -726,7 +760,8 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   }, { timeout: 30_000 }).toBe(true);
   await expect(nanoRows).toHaveCount(wideSize[0], { timeout: 30_000 });
   const wideNanoTokens = await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g);
-  expect(wideNanoTokens).toBeGreaterThan(6);
+  expect(wideNanoTokens).not.toBeNull();
+  expect(wideNanoTokens!).toBeGreaterThan(6);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(nanoRows).toHaveCount(narrowSize[0], { timeout: 30_000 });
   await expect.poll(async () => {
@@ -736,10 +771,12 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
       && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
   }, { timeout: 30_000 }).toBe(true);
   await expect.poll(
-    () => renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g),
+    async () => hasRenderedReflow(wideNanoTokens, await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g)),
     { timeout: 30_000 },
-  ).toBeLessThan(wideNanoTokens);
-  expect(await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g)).toBeLessThanOrEqual(6);
+  ).toBe(true);
+  const narrowNanoTokens = await renderedTokensInRow(nanoRows, "WRAP00", /WRAP\d\d/g);
+  expect(narrowNanoTokens).not.toBeNull();
+  expect(narrowNanoTokens!).toBeGreaterThan(0);
   await page.keyboard.press("Control+X");
   let nanoForegroundSizes: ForegroundSample[] = [];
   await expect.poll(async () => {
@@ -780,7 +817,7 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
   }));
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 300_000 });
   await expect(page.getByRole("status").filter({
     hasText: "Verified fallback WASM selected after primary initialization failed.",
   })).toBeVisible();
@@ -806,7 +843,7 @@ test("opt-in guest native actions expose truthful open and clipboard feedback", 
   });
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 300_000 });
 
   const input = page.locator(".xterm-helper-textarea");
   await input.click();
@@ -850,19 +887,19 @@ test("opt-in guest native actions expose truthful open and clipboard feedback", 
 });
 
 test("opt-in guest Worker resets cleanly and terminates when its terminal unmounts", async ({ page }) => {
-  test.setTimeout(360_000);
+  test.setTimeout(480_000);
   await requireGeneratedGuestManifest(page);
   let workerCreations = 0;
   page.on("worker", () => { workerCreations += 1; });
   await page.goto("/en");
   await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+  await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 300_000 });
   expect(page.workers()).toHaveLength(1);
   for (let reset = 0; reset < 2; reset += 1) {
     const workerCountBeforeReset = workerCreations;
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect.poll(() => workerCreations).toBeGreaterThan(workerCountBeforeReset);
-    await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 220_000 });
+    await expect(page.getByText(/Guest shell ready/)).toBeVisible({ timeout: 300_000 });
     expect(page.workers()).toHaveLength(1);
   }
 

@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-const RELEASE = "alpine-3.24.2-v86-0.5.469";
+const RELEASE = "alpine-3.24.3-v86-0.5.469";
 const MANIFEST_URL = `https://example.test/browser-os/${RELEASE}/manifest.json`;
 const RELEASE_BASE_URL = new URL("./", MANIFEST_URL).href;
 const WASM_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);

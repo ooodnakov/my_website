@@ -188,16 +188,18 @@ export class V86TerminalSession implements TerminalSession {
       worker.addEventListener("message", this.handleMessage);
       worker.addEventListener("error", this.handleError);
       worker.addEventListener("messageerror", this.handleError);
+      // Firmware boot, rootfs mount and the COM2 daemon need ~2 minutes on
+      // current ARM64 Chromium, so 180 s failed a guest that was still booting.
       this.bootTimer = window.setTimeout(() => {
         if (this.state.status === "busy") {
           this.inputReady = false;
           this.setState({ status: "failed", error: new Error("Guest shell startup timed out") });
           this.shutdownWorker();
         }
-      }, 180_000);
+      }, 300_000);
       worker.postMessage({
         type: "start",
-        manifestUrl: new URL("/browser-os/alpine-3.24.2-v86-0.5.469/manifest.json", window.location.href).href,
+        manifestUrl: new URL("/browser-os/alpine-3.24.3-v86-0.5.469/manifest.json", window.location.href).href,
         cols: this.columns,
         rows: this.rows,
         locale: this.language,

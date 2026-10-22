@@ -31,7 +31,7 @@ const scope = globalThis as typeof globalThis & {
   addEventListener(type: "unhandledrejection", listener: (event: PromiseRejectionEvent) => void): void;
 };
 const MAX_SERIAL_BATCH = 64 * 1024;
-const EXPECTED_RELEASE = "alpine-3.24.2-v86-0.5.469";
+const EXPECTED_RELEASE = "alpine-3.24.3-v86-0.5.469";
 const EXPECTED_KERNEL_COMMAND_LINE = "console=ttyS0,115200n8 root=host9p rootfstype=9p rootflags=trans=virtio,version=9p2000.L rw modules=virtio_pci";
 interface TerminalDimensions {
   cols: number;

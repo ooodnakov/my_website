@@ -99,13 +99,41 @@ jobs:
         if: ${{ matrix.name == 'main-browser' }}
         run: ./tools/browser-os/build.sh
 
+      # build.sh names its output from a fixed version while the manifest records
+      # the release derived from the built rootfs. Serve and upload the tree under
+      # the manifest's own release so the app's pinned URL is what CI verified.
+      - name: Align generated guest directory with its manifest release
+        if: ${{ matrix.name == 'main-browser' }}
+        run: |
+          root=apps/main/client/public/browser-os
+          dir=$(find "$root" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          release=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$dir/manifest.json")
+          if [ "$(basename "$dir")" != "$release" ]; then
+            mv "$dir" "$root/$release"
+          fi
+          test -f "$root/$release/manifest.json"
+
+      # A green generation is not a usable tree until it is retrievable: this
+      # uploads the complete generated guest so paired app verification can
+      # consume exactly the bytes CI built and verified.
+      - name: Upload generated browser OS guest
+        if: ${{ matrix.name == 'main-browser' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-os-guest-${{ github.sha }}
+          path: apps/main/client/public/browser-os
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Install browser OS smoke dependencies
         if: ${{ matrix.name == 'main-browser' }}
         run: pnpm --dir tools/browser-os install --frozen-lockfile
 
       - name: Boot generated browser OS guest
         if: ${{ matrix.name == 'main-browser' }}
-        run: pnpm --dir tools/browser-os smoke -- --node
+        run: |
+          dir=$(find apps/main/client/public/browser-os -mindepth 1 -maxdepth 1 -type d -print -quit)
+          pnpm --dir tools/browser-os smoke -- --node "$dir"
 
       - name: Build production application
         if: ${{ matrix.name == 'main-browser' }}
