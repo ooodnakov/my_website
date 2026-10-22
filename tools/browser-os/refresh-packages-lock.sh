@@ -194,13 +194,17 @@ for area, commit in (("main", main_aports), ("community", community_aports), ("t
     )
     if count != 1:
         sys.exit(f"browser-os package lock: could not update APORTS_COMMITS[{area!r}]")
-updated = re.sub(
-    r'^(APORTS_RECIPE_OVERRIDES = \{"openssl":\s*\("main",\s*)"[0-9a-f]{40}"(\))',
+updated, count = re.subn(
+    r'^(APORTS_RECIPE_OVERRIDES = \{\s*"openssl":\s*\("main",\s*)"[0-9a-f]{40}"(\))',
     rf'\g<1>"{main_aports}"\g<2>',
     updated,
     count=1,
     flags=re.MULTILINE,
 )
+if count != 1:
+    sys.exit(
+        "browser-os package lock: could not update APORTS_RECIPE_OVERRIDES['openssl']"
+    )
 provenance.write_text(updated, encoding="utf-8", newline="\n")
 
 if drifted:

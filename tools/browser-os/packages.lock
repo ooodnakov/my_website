@@ -4,8 +4,8 @@
 # in this header. Alpine release branches are mutable, so the build refuses
 # to resolve against a different snapshot instead of silently drifting.
 #
-# index main sha256 32f24504c290b7314fe3675fde15a3e37b23a752836827e3ee0548e0ab9ef00a
-# index community sha256 f61342fc046035c0047c1649c25e6e4f38848f36801ac8aa6b9d6805cb670cfb
+# index main sha256 80afc2122dceb72ab1334a36ff4f70a1e866c34812f8a641474f6e8c86a9058a
+# index community sha256 aec188e7a7a6e7986ef92f4995cc0f6f7a6767a085c01ad91c00dc8c7a192a6d
 #
 # The guest root is a minirootfs release; pinning an older one against this
 # snapshot leaves the base packages on the previous release.
@@ -14,8 +14,8 @@
 #
 # The manifest resolves every installed package back to an APKBUILD, so the
 # recipe revisions must come from the snapshot that built these versions.
-# aports main 058e35320f81c4f8803a445d206ac7d3f5a5f8d2
-# aports community b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4
+# aports main 8f82aba1fb0e7f7aacc75a166d4032ef03cba691
+# aports community 2f7cf36f2ec208bb95d5ba56ae115dc3abc74591
 #
 # Regenerate with tools/browser-os/refresh-packages-lock.sh and review the
 # resulting version bump as part of the change that needs it.
@@ -64,7 +64,7 @@ linux-virt=6.18.58-r0
 llhttp=9.4.1-r0
 mdev-conf=4.10-r0
 mkinitfs=3.14.1-r0
-nano=9.2-r0
+nano=9.3-r0
 ncurses-terminfo-base=6.6_p20260516-r0
 nghttp2-libs=1.70.0-r0
 oniguruma=6.9.10-r0
@@ -72,6 +72,7 @@ openrc=0.63.2-r0
 openrc-user=0.63.2-r0
 openrc-zsh-completion=0.63.2-r0
 pcre2=10.49-r0
+python3=3.14.8-r0
 skalibs-libs=2.15.0.0-r0
 utmps-libs=0.1.3.3-r0
 xz-libs=5.8.4-r0

@@ -10,6 +10,7 @@ SEABIOS_COMMIT=ea1b7a0733906b8425d948ae94fba63c32b1d425
 ALPINE_BRANCH_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
+
 SOURCE_DATE_EPOCH=1767225600
 export SOURCE_DATE_EPOCH
 
@@ -59,7 +60,15 @@ $PROOT_NET /sbin/apk --no-scripts add "$@"
 APORTS_SOURCE="$WORK/aports"
 # GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
 APORTS_MIRROR=https://github.com/alpinelinux/aports.git
-git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
+# A full-history clone of aports is large enough to time out on slow links and
+# is never used: provenance reads only the recorded revisions. Take the branch
+# head shallow, then fetch the exact snapshot commits below.
+git clone --depth=1 --filter=blob:none --no-checkout --single-branch \
+  --branch "$(python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_BRANCH
+print(APORTS_BRANCH)')" \
+  "$APORTS_MIRROR" "$APORTS_SOURCE"
 # source_provenance.py owns the aports revisions the manifest resolves against;
 # duplicating them here let the clone and the manifest drift apart.
 aports_commits() {
@@ -78,11 +87,30 @@ sys.path.insert(0, "/usr/local/bin")
 from source_provenance import APORTS_COMMITS
 print(APORTS_COMMITS["community"])'
 )"
+[ -d /input/portfolio/en ] && [ -d /input/portfolio/ru ] || fail 'canonical portfolio exports are missing'
+mkdir -p "$ROOTFS/portfolio"
+cp -R /input/portfolio/. "$ROOTFS/portfolio/"
+mkdir -p "$ROOTFS/usr/local/bin"
+cp /usr/local/share/browser-os/guest/about /usr/local/share/browser-os/guest/contact /usr/local/share/browser-os/guest/cv /usr/local/share/browser-os/guest/links /usr/local/share/browser-os/guest/projects /usr/local/share/browser-os/guest/tour /usr/local/share/browser-os/guest/open /usr/local/share/browser-os/guest/copy-contact /usr/local/share/browser-os/guest/set-locale "$ROOTFS/usr/local/bin/"
+install -D -m 0555 /usr/local/share/browser-os/guest/guestctl "$ROOTFS/usr/local/bin/guestctl"
+install -D -m 0555 /usr/local/share/browser-os/guest/browser-osd "$ROOTFS/usr/local/sbin/browser-osd"
+# This build installs the distro zsh, which never writes v2 control records.
+# Remove any stale producer marker so the broker runs without the channel.
+rm -f "$ROOTFS/etc/browser-os/zle-control-v2"
+install -D -m 0444 /usr/local/share/browser-os/guest/zle-hooks.zsh "$ROOTFS/etc/browser-os/zle-hooks.zsh"
 
 $PROOT /bin/sh -ec '
-  adduser -D -u 1000 -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor
   passwd -l root
-  mkdir -p /home/visitor /tmp /run /var/log /portfolio
+  mkdir -p /tmp /run /var/log /portfolio
+  addgroup -g 1000 visitor
+  adduser -D -u 1000 -G visitor -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor
+  # Verify BusyBox adduser -D left the visitor password locked.
+  grep -q "^visitor:!" /etc/shadow || { echo "visitor account password is not locked" >&2; exit 1; }
+  chown -R root:root /portfolio
+  ln -s en /portfolio/current
+  ln -s portfolio/current/site.json /site.json
+  chmod -R a-w /portfolio
+  chmod 0555 /portfolio
   chown -R 1000:1000 /home/visitor
   chmod 0700 /home/visitor
   chmod 1777 /tmp
@@ -99,16 +127,17 @@ $PROOT /bin/sh -ec '
 ::sysinit:/sbin/openrc sysinit
 ::sysinit:/sbin/openrc boot
 ::wait:/sbin/openrc default
-ttyS0::respawn:/sbin/agetty --autologin visitor -L ttyS0 115200 vt100
+::respawn:/usr/local/sbin/browser-osd
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/sbin/openrc shutdown
 EOF
   cat > /etc/motd <<"EOF"
 Alpine Linux x86 guest; offline, ephemeral browser-local session.
-Visitor tools: zsh, jq, git, eza, fzf, zoxide.
+Visitor tools: zsh, jq, git, eza, fzf, zoxide, guestctl.
 EOF
   cat > /home/visitor/.zshrc <<"EOF"
 export LANG=C.UTF-8
+export PATH="/usr/local/bin:$PATH"
 export TERM=xterm-256color
 export HISTFILE=$HOME/.zsh_history
 export HISTSIZE=10000 SAVEHIST=10000
@@ -116,8 +145,15 @@ setopt append_history share_history hist_ignore_all_dups
 alias a="eza -lah --git --color-scale all -g --smart-group --icons always --hyperlink auto"
 autoload -Uz compinit
 compinit -C -u -d "$HOME/.zcompdump"
+source /etc/browser-os/zle-hooks.zsh
 if command -v zoxide >/dev/null 2>&1; then eval "$(zoxide init zsh)"; fi
-print -r -- "__GUEST_READY__"
+autoload -Uz add-zsh-hook
+_browser_os_shell_ready() {
+  add-zsh-hook -d precmd _browser_os_shell_ready
+  print -r -- "shellReady" >> /run/browser-os/shell-out 2>/dev/null
+  print -r -- "__GUEST_READY__"
+}
+add-zsh-hook precmd _browser_os_shell_ready
 EOF
   chown 1000:1000 /home/visitor/.zshrc
   chmod 0600 /home/visitor/.zshrc
@@ -125,6 +161,10 @@ EOF
 HOME=/home/visitor $PROOT /bin/zsh -fc 'autoload -Uz compinit; compinit -u -d /home/visitor/.zcompdump'
 chown 1000:1000 "$ROOTFS/home/visitor/.zcompdump"
 chmod 0444 "$ROOTFS/home/visitor/.zcompdump"
+python3 /usr/local/bin/normalize-shadow.py "$ROOTFS" "$SOURCE_DATE_EPOCH"
+python3 /usr/local/bin/guest-build-identity.py /input/guest-build-inputs.json "$OUT/alpine/guest-build.json"
+install -D -m 0444 "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json"
+cmp -s "$OUT/alpine/guest-build.json" "$ROOTFS/etc/browser-os/guest-build.json" || fail 'embedded guest build identity differs from published descriptor'
 
 python3 -c 'import os,pathlib,sys; epoch=int(sys.argv[2]); [os.utime(path,(epoch,epoch),follow_symlinks=False) for path in [pathlib.Path(sys.argv[1]),*pathlib.Path(sys.argv[1]).rglob("*")]]' "$ROOTFS" "$SOURCE_DATE_EPOCH"
 $PROOT /sbin/mkinitfs -F "base virtio 9p" -t /tmp/mkinitfs-stage "$($PROOT /bin/cat /usr/share/kernel/virt/kernel.release)"
@@ -133,13 +173,20 @@ $PROOT /sbin/mkinitfs -F "base virtio 9p" -t /tmp/mkinitfs-stage "$($PROOT /bin/
 rm -rf "$ROOTFS/lib/modules"
 
 mkdir -p "$V86_SOURCE"
-git clone --filter=blob:none https://github.com/copy/v86.git "$V86_SOURCE"
-git -C "$V86_SOURCE" checkout --detach "$V86_COMMIT"
+git init -q "$V86_SOURCE"
+git -C "$V86_SOURCE" remote add origin https://github.com/copy/v86.git
+git -C "$V86_SOURCE" fetch --depth=1 origin "$V86_COMMIT"
+git -C "$V86_SOURCE" checkout --detach FETCH_HEAD
 [ "$(git -C "$V86_SOURCE" rev-parse HEAD)" = "$V86_COMMIT" ] || fail 'v86 source revision mismatch'
 git -C "$V86_SOURCE" apply /usr/local/share/browser-os/python-zstd-fallback.patch
 SEABIOS_SOURCE="$WORK/seabios"
-git clone --filter=blob:none https://git.seabios.org/seabios.git "$SEABIOS_SOURCE"
-git -C "$SEABIOS_SOURCE" checkout --detach "$SEABIOS_COMMIT"
+# git.seabios.org regularly drops large pack transfers; this mirror carries the
+# same objects and the exact recorded commit is still verified after checkout.
+SEABIOS_MIRROR=https://github.com/coreboot/seabios.git
+git init -q "$SEABIOS_SOURCE"
+git -C "$SEABIOS_SOURCE" remote add origin "$SEABIOS_MIRROR"
+git -C "$SEABIOS_SOURCE" fetch --depth=1 origin "$SEABIOS_COMMIT"
+git -C "$SEABIOS_SOURCE" checkout --detach FETCH_HEAD
 [ "$(git -C "$SEABIOS_SOURCE" rev-parse HEAD)" = "$SEABIOS_COMMIT" ] || fail 'SeaBIOS source revision mismatch'
 
 
@@ -174,5 +221,5 @@ python3 "$V86_SOURCE/tools/copy-to-sha256.py" --zstd "$ROOTFS" "$OUT/alpine/9p/b
 # Source-date normalization makes locally generated files deterministic. Keep
 # the original upstream package/kernel mtimes represented in package contents.
 find "$OUT" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT" "$APORTS_SOURCE"
+python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT" "$APORTS_SOURCE" "$PACKAGES_LOCK"
 printf '%s\n' "Guest assets generated at $OUT"

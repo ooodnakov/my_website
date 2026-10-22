@@ -13,12 +13,12 @@ import urllib.parse
 APORTS_REPOSITORY = "https://gitlab.alpinelinux.org/alpine/aports"
 APORTS_BRANCH = "3.24-stable"
 APORTS_COMMITS = {
-    "main": "058e35320f81c4f8803a445d206ac7d3f5a5f8d2",
-    "community": "b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4",
-    "testing": "b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4",
+    "main": "8f82aba1fb0e7f7aacc75a166d4032ef03cba691",
+    "community": "2f7cf36f2ec208bb95d5ba56ae115dc3abc74591",
+    "testing": "2f7cf36f2ec208bb95d5ba56ae115dc3abc74591",
 }
 APORTS_RECIPE_OVERRIDES = {
-    "openssl": ("main", "058e35320f81c4f8803a445d206ac7d3f5a5f8d2"),
+    "openssl": ("main", "8f82aba1fb0e7f7aacc75a166d4032ef03cba691"),
 }
 
 
@@ -235,6 +235,35 @@ def _source_references(text: str, variables: dict[str, str]) -> list[str]:
         raise ValueError("could not split resolved APKBUILD source list") from error
 
 
+def _expand_readline_patch_loop(text: str, pkgname: str, pkgver: str) -> str:
+    loop = re.compile(
+        r'(?m)^_i=1\n'
+        r'while \[ \$_i -le \$\{pkgver##\*\.\} \]; do\n'
+        r'\t_patch=\$\(printf "%03d" \$_i\)\n'
+        r'\t_name=\$pkgname\$\{_myver//\./\}-\$_patch\n'
+        r'\tsource="\$source\n'
+        r'\t\t\$_name\.patch::https://ftp\.gnu\.org/gnu/readline/readline-\$_myver-patches/\$_name"\n'
+        r'\t_i=\$\(\(_i\+1\)\)\n'
+        r'done\n'
+    )
+    matches = list(loop.finditer(text))
+    if len(matches) != 1:
+        raise ValueError("unsupported readline source patch loop")
+    version, patch_count = pkgver.rsplit(".", 1)
+    if not patch_count.isdigit() or int(patch_count) > 999:
+        raise ValueError("invalid readline patch count")
+    patch_base = f"{pkgname}{version.replace('.', '')}"
+    statements = []
+    for index in range(1, int(patch_count) + 1):
+        name = f"{patch_base}-{index:03d}"
+        statements.append(
+            f'source="$source\n\t\t{name}.patch::'
+            f'https://ftp.gnu.org/gnu/readline/readline-{version}-patches/{name}"'
+        )
+    match = matches[0]
+    return text[:match.start()] + "\n".join(statements) + "\n" + text[match.end():]
+
+
 def _source_items(
     text: str,
     repo: pathlib.Path,
@@ -245,12 +274,21 @@ def _source_items(
     pkgrel: str,
     architecture: str,
 ) -> list[dict]:
+    if recipe_path == "main/readline/APKBUILD":
+        text = _expand_readline_patch_loop(text, pkgname, pkgver)
     variables = {"pkgname": pkgname, "pkgver": pkgver, "pkgrel": pkgrel, "FLAVOR": ""}
     if architecture != "unknown":
         variables["CARCH"] = architecture
     # Alpine util-linux selects this source URL directory in a pkgver case arm.
     if pkgname == "util-linux":
         variables["_v"] = pkgver.rsplit(".", 1)[0] if pkgver.count(".") > 1 else pkgver
+    elif pkgname == "sqlite":
+        version_parts = pkgver.split(".")
+        if len(version_parts) not in (3, 4) or any(not part.isdigit() for part in version_parts):
+            raise ValueError(f"unsupported SQLite package version: {pkgver}")
+        major, minor, patch = version_parts[:3]
+        suffix = version_parts[3] if len(version_parts) == 4 else "0"
+        variables["_ver"] = f"{major}{minor.zfill(2)}{patch.zfill(2)}{suffix.zfill(2)}"
     variable_pattern = re.compile(
         r"(?ms)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)=(?:\"(.*?)\"|'(.*?)'|([^\s#]+))"
     )
