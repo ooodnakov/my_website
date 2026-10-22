@@ -3,6 +3,9 @@ import importlib.machinery
 import importlib.util
 import pathlib
 import struct
+import socket
+from contextlib import ExitStack
+from unittest.mock import patch
 import unittest
 
 
@@ -58,6 +61,173 @@ class FrameParserTests(unittest.TestCase):
 
 
 
+class BrokerConstructionIntegrationTests(unittest.TestCase):
+    class ExecReached(Exception):
+        pass
+
+    def construct_parent(self):
+        visitor = type("Visitor", (), {
+            "pw_name": "visitor", "pw_gid": 1000, "pw_uid": 1000,
+            "pw_dir": "/home/visitor",
+        })()
+        with patch.object(BROKER.os, "geteuid", return_value=0), \
+                patch.object(BROKER, "load_guest_build_id", return_value="a" * 64), \
+                patch.object(BROKER, "load_portfolio_ids", return_value=frozenset({"quick-cv"})), \
+                patch.object(BROKER.pwd, "getpwnam", return_value=visitor), \
+                patch.object(BROKER.os, "open", side_effect=(100, 101)), \
+                patch.object(BROKER, "set_raw_115200"), \
+                patch.object(BROKER.signal, "signal"), \
+                patch.object(BROKER.Broker, "create_local_endpoints",
+                             lambda broker: setattr(broker, "fifo_in", 102)), \
+                patch.object(BROKER.Broker, "create_server", return_value=object()), \
+                patch.object(BROKER.pty, "fork", return_value=(5000, 103)), \
+                patch.object(BROKER.os, "set_blocking"), \
+                patch.object(BROKER.Broker, "resize"):
+            broker = BROKER.Broker()
+        self.addCleanup(broker.zle_control_parent.close)
+        return broker
+
+    def test_parent_fork_path_keeps_parent_control_socket_and_bootstraps(self):
+        broker = self.construct_parent()
+
+        self.assertEqual(broker.shell_pid, 5000)
+        self.assertIsNone(broker.zle_control_child)
+        self.assertGreaterEqual(broker.zle_control_parent.fileno(), 0)
+        self.assertTrue(broker.zle_control_parent.getblocking() is False)
+        self.assertIsNotNone(broker.bootstrap_bytes_remaining)
+        self.assertTrue(broker.com2_output.startswith(b"BOS1"))
+
+    def test_child_fork_path_transfers_control_fd_then_execs_zsh(self):
+        visitor = type("Visitor", (), {
+            "pw_name": "visitor", "pw_gid": 1000, "pw_uid": 1000,
+            "pw_dir": "/home/visitor",
+        })()
+        pairs = []
+        real_socketpair = BROKER.socket.socketpair
+
+        def record_socketpair(*args):
+            pair = real_socketpair(*args)
+            pairs.append(pair)
+            return pair
+
+        def stop_exec(path, argv):
+            self.assertEqual((path, argv), ("/bin/zsh", ["zsh", "-l"]))
+            self.assertEqual(BROKER.os.environ["ZSH_BROWSER_OS_CONTROL_FD"], "3")
+            raise self.ExecReached()
+
+        dup2 = patch.object(BROKER.os, "dup2")
+        close = patch.object(BROKER.os, "close")
+        execv = patch.object(BROKER.os, "execv", side_effect=stop_exec)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(BROKER.os, "geteuid", return_value=0))
+            stack.enter_context(patch.object(BROKER, "load_guest_build_id", return_value="a" * 64))
+            stack.enter_context(patch.object(BROKER, "load_portfolio_ids", return_value=frozenset({"quick-cv"})))
+            stack.enter_context(patch.object(BROKER.pwd, "getpwnam", return_value=visitor))
+            stack.enter_context(patch.object(BROKER.os, "open", side_effect=(100, 101)))
+            stack.enter_context(patch.object(BROKER, "set_raw_115200"))
+            stack.enter_context(patch.object(BROKER.signal, "signal"))
+            stack.enter_context(patch.object(BROKER.socket, "socketpair", side_effect=record_socketpair))
+            stack.enter_context(patch.object(
+                BROKER.Broker, "create_local_endpoints",
+                lambda broker: setattr(broker, "fifo_in", 102),
+            ))
+            stack.enter_context(patch.object(BROKER.Broker, "create_server", return_value=object()))
+            stack.enter_context(patch.object(BROKER.pty, "fork", return_value=(0, 103)))
+            stack.enter_context(patch.object(BROKER.os, "set_blocking"))
+            stack.enter_context(patch.object(BROKER.os, "set_inheritable"))
+            stack.enter_context(patch.object(BROKER.os, "closerange"))
+            stack.enter_context(patch.object(BROKER.os, "initgroups"))
+            stack.enter_context(patch.object(BROKER.os, "setgid"))
+            stack.enter_context(patch.object(BROKER.os, "setuid"))
+            stack.enter_context(patch.object(BROKER.os, "chdir"))
+            dup2_mock = stack.enter_context(dup2)
+            close_mock = stack.enter_context(close)
+            execv_mock = stack.enter_context(execv)
+            stack.enter_context(patch.dict(BROKER.os.environ, {}, clear=True))
+            with self.assertRaises(self.ExecReached):
+                BROKER.Broker()
+
+        child_fd = dup2_mock.call_args.args[0]
+        dup2_mock.assert_called_once_with(child_fd, 3)
+        close_mock.assert_called_once_with(child_fd)
+        execv_mock.assert_called_once()
+        self.assertEqual(pairs[0][0].fileno(), -1)
+        self.assertEqual(pairs[0][1].fileno(), -1)
+        os.close(child_fd)
+
+    def test_com2_select_loop_processes_hello_locale_and_action_ack(self):
+        broker = self.construct_parent()
+        com2, host = socket.socketpair()
+        com1, terminal = socket.socketpair()
+        pty_master, shell = socket.socketpair()
+        server, server_peer = socket.socketpair()
+        control, control_peer = socket.socketpair()
+        self.addCleanup(control.close)
+        self.addCleanup(control_peer.close)
+        broker.zle_control_parent.close()
+        broker.zle_control_parent = control
+        control.setblocking(False)
+        fifo_in, fifo_out = os.pipe()
+        for resource in (com2, host, com1, terminal, pty_master, shell, server, server_peer):
+            self.addCleanup(resource.close)
+        self.addCleanup(os.close, fifo_in)
+        self.addCleanup(os.close, fifo_out)
+        host.settimeout(1)
+        broker.com2 = com2.fileno()
+        broker.com1 = com1.fileno()
+        broker.pty_master = pty_master.fileno()
+        broker.server = server.fileno()
+        broker.fifo_in = fifo_in
+        broker.shell_pid = 5000
+        broker.resize = lambda cols, rows: setattr(broker, "dimensions", (cols, rows))
+        locales = []
+        broker.set_locale = locales.append
+
+        broker.flush_fd(broker.com2, broker.com2_output)
+        bootstrap = BROKER.FrameParser().feed(host.recv(4096))
+        self.assertEqual([frame["op"] for frame in bootstrap], ["bootstrap"])
+
+        session = "b" * 32
+        host.sendall(
+            BROKER.encode_frame({
+                "v": 1, "sessionId": session, "seq": 1, "op": "hello",
+                "cols": 100, "rows": 40,
+            })
+            + BROKER.encode_frame({
+                "v": 1, "sessionId": session, "seq": 2, "op": "setLocale",
+                "locale": "ru",
+            })
+        )
+        with patch.object(BROKER.os, "waitpid", side_effect=[
+            (0, 0), (0, 0), (broker.shell_pid, 0),
+        ]):
+            broker.run()
+        startup = BROKER.FrameParser().feed(host.recv(4096))
+        self.assertEqual([frame["op"] for frame in startup], ["ready", "localeAck"])
+        self.assertEqual([frame["seq"] for frame in startup], [1, 2])
+        self.assertEqual((broker.dimensions, locales), ((100, 40), ["ru"]))
+        self.assertTrue(broker.initial_locale_acknowledged)
+
+        replies = []
+        broker.reply = lambda _client, text: replies.append(text)
+        client = object()
+        broker.handle_cli(client, b"open quick-cv")
+        action = BROKER.FrameParser().feed(broker.com2_output)[0]
+        host.sendall(BROKER.encode_frame({
+            "v": 1, "sessionId": session, "seq": 3, "op": "ack",
+            "ackSeq": action["seq"], "status": "queued",
+        }))
+        with patch.object(BROKER.os, "waitpid", side_effect=[
+            (0, 0), (broker.shell_pid, 0),
+        ]):
+            broker.run()
+        action_wire = BROKER.FrameParser().feed(host.recv(4096))
+        self.assertEqual([frame["op"] for frame in action_wire], ["portfolioAction"])
+        self.assertEqual((action_wire[0]["requestId"], action_wire[0]["linkId"]), (1, "quick-cv"))
+        self.assertEqual(replies, ["queued"])
+        self.assertIsNone(broker.pending_cli)
+
+
 class FenceOrderingTests(unittest.TestCase):
     def broker_with_fence(self, target):
         broker = BROKER.Broker.__new__(BROKER.Broker)
@@ -74,46 +244,47 @@ class FenceOrderingTests(unittest.TestCase):
         broker.error = broker.errors.append
         return broker
 
-    def test_fence_waits_for_prefix_forwarding_then_releases_suffix_in_order(self):
+    def test_read_count_never_authorizes_clean_fence(self):
         broker = self.broker_with_fence(3)
-        broker.input_bytes(b"ab")
-        broker.input_bytes(b"cd")
-
-        self.assertEqual(broker.input_queue, b"abc")
-        self.assertEqual(broker.gated_input, b"d")
-        self.assertEqual(broker.frames, [])
-
+        broker.input_bytes(b"abc")
         broker.com1_forwarded = 3
-        broker.zle_input_ordinal = 2
-        broker.try_fence()
-
-        self.assertEqual(broker.frames, [])
-        self.assertEqual(broker.input_queue, b"abc")
-        self.assertEqual(broker.gated_input, b"d")
-        self.assertIsNotNone(broker.fence)
-
         broker.zle_input_ordinal = 3
         broker.zle_state = 1
+
         broker.try_fence()
 
         self.assertEqual(broker.frames, [("inputFenceAck", {
             "fenceId": 7,
             "inputBytes": 3,
-            "state": "cleanPrompt",
+            "state": "unknown",
         })])
         self.assertEqual(broker.input_queue, b"abc")
-        self.assertEqual(broker.gated_input, b"d")
-        self.assertTrue(broker.fence["acknowledged"])
-        broker.abort_fence()
+        self.assertEqual(broker.gated_input, b"")
+        self.assertIsNone(broker.fence)
+        self.assertEqual(broker.errors, [])
+
+    def test_later_ordinary_input_cancels_fence_and_releases_bytes_in_order(self):
+        broker = self.broker_with_fence(3)
+        broker.input_bytes(b"abc")
+        broker.com1_forwarded = 3
+        broker.zle_input_ordinal = 3
+        broker.zle_state = 1
+
+        broker.input_bytes(b"d")
+
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7,
+            "inputBytes": 3,
+            "state": "busy",
+        })])
         self.assertEqual(broker.input_queue, b"abcd")
         self.assertEqual(broker.gated_input, b"")
         self.assertIsNone(broker.fence)
         self.assertEqual(broker.errors, [])
 
-    def test_nonclean_editor_state_rejects_and_releases_suffix(self):
+    def test_nonclean_editor_state_rejects_and_releases_input(self):
         broker = self.broker_with_fence(3)
-        broker.input_bytes(b"ab")
-        broker.input_bytes(b"cd")
+        broker.input_bytes(b"abc")
         broker.com1_forwarded = 3
         broker.zle_input_ordinal = 3
         broker.zle_state = 0
@@ -125,20 +296,17 @@ class FenceOrderingTests(unittest.TestCase):
             "inputBytes": 3,
             "state": "busy",
         })])
-        self.assertEqual(broker.input_queue, b"abcd")
+        self.assertEqual(broker.input_queue, b"abc")
         self.assertEqual(broker.gated_input, b"")
         self.assertIsNone(broker.fence)
 
+
     def test_ctrl_c_cancels_an_active_fence_and_releases_every_byte_in_order(self):
         broker = self.broker_with_fence(3)
-        broker.input_bytes(b"ab")
-        broker.input_bytes(b"cxy")
-        self.assertEqual(broker.input_queue, b"abc")
-        self.assertEqual(broker.gated_input, b"xy")
-
+        broker.input_bytes(b"abc")
         broker.input_bytes(b"\x03")
 
-        self.assertEqual(broker.input_queue, b"abcxy\x03")
+        self.assertEqual(broker.input_queue, b"abc\x03")
         self.assertEqual(broker.gated_input, b"")
         self.assertIsNone(broker.fence)
         self.assertEqual(broker.frames, [])
