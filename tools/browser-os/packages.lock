@@ -4,8 +4,8 @@
 # in this header. Alpine release branches are mutable, so the build refuses
 # to resolve against a different snapshot instead of silently drifting.
 #
-# index main sha256 32f24504c290b7314fe3675fde15a3e37b23a752836827e3ee0548e0ab9ef00a
-# index community sha256 f61342fc046035c0047c1649c25e6e4f38848f36801ac8aa6b9d6805cb670cfb
+# index main sha256 44400b7224dedab99ffc18aba39ba4df982725cacfe30621fb3c999c46d44e86
+# index community sha256 b283995953cff78a0c3b28043fbde1ae98a2f5cd77b3378e8aa0a1cc62296d5f
 #
 # The guest root is a minirootfs release; pinning an older one against this
 # snapshot leaves the base packages on the previous release.
@@ -14,8 +14,8 @@
 #
 # The manifest resolves every installed package back to an APKBUILD, so the
 # recipe revisions must come from the snapshot that built these versions.
-# aports main 058e35320f81c4f8803a445d206ac7d3f5a5f8d2
-# aports community b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4
+# aports main 4f5be284ba89eb2c6f0c9376668ec1f8d7265d26
+# aports community 220a7ab3ba8de1c79bffebd42c2f86a9baff6b2f
 #
 # Regenerate with tools/browser-os/refresh-packages-lock.sh and review the
 # resulting version bump as part of the change that needs it.
