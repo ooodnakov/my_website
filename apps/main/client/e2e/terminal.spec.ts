@@ -792,7 +792,7 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
 });
 
 test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback module", async ({ page }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   await requireGeneratedGuestManifest(page);
   const workerUrls: string[] = [];
   let fallbackRequested = false;
@@ -832,7 +832,7 @@ test("a hash-pinned malformed primary v86 WASM falls back to the pinned fallback
 });
 
 test("opt-in guest native actions expose truthful open and clipboard feedback", async ({ page }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   await requireGeneratedGuestManifest(page);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {

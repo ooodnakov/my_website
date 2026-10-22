@@ -12,7 +12,7 @@ COM2 cold start installs the UART1 listener before `v86.run()`. The guest's exac
 
 Guest dispatch ACKs use the exact `{ackSeq, requestId, status}` shape; both identifiers are bounded to 1..2147483647 and must match the outstanding host sequence and request. This host keeps dispatch disabled until real guest input-consumption and execution proof exists, so an ACK with no outstanding dispatch revokes control.
 
-The Worker holds `shellReady` until the guest build identity is valid and the latest requested initial resize is acknowledged, then emits `control-ready` before `shell-ready`. A missing resize ACK fails within 10 seconds; `V86TerminalSession` remains busy until both readiness signals and input routing are confirmed, within the existing 180-second boot bound.
+The Worker holds `shellReady` until the guest build identity is valid and the latest requested initial resize is acknowledged, then emits `control-ready` before `shell-ready`. A missing resize ACK fails within 10 seconds; `V86TerminalSession` remains busy until both readiness signals and input routing are confirmed, within the 300-second boot bound.
 
 The host sends `inputFence` with a monotonically increasing fence ID and cumulative COM1 byte count after raw input. A matching `inputFenceAck` reports the guest's consumed-byte boundary and shell state; a superseded acknowledgement cannot authorize anything. `shellState` is advisory only. Neither shell reports nor fence acknowledgements enable host dispatch: quick actions remain disabled until genuine guest consumption and execution proof exists. The accepted host protocol does not supply that proof; the Systems-owned guest implementation remains a prerequisite.
 
