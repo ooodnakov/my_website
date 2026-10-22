@@ -2,6 +2,7 @@
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 from source_provenance import APORTS_BRANCH, APORTS_COMMITS, APORTS_RECIPE_OVERRIDES, APORTS_REPOSITORY, enrich_packages
@@ -13,6 +14,44 @@ def sha256(path: pathlib.Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def minirootfs_pin(lock_path: pathlib.Path) -> tuple[str, str, str]:
+    text = lock_path.read_text(encoding="utf-8")
+    version = re.search(r"^# minirootfs (\S+) sha256 ", text, re.MULTILINE)
+    digest = re.search(r"^# minirootfs \S+ sha256 ([0-9a-f]{64})$", text, re.MULTILINE)
+    url = re.search(r"^# minirootfs url (\S+)$", text, re.MULTILINE)
+    if not (version and digest and url):
+        raise SystemExit(f"{lock_path} records no complete minirootfs pin")
+    return version.group(1), digest.group(1), url.group(1)
+
+
+def resolve_release(
+    rootfs: pathlib.Path, lock_path: pathlib.Path, alpine_sha256: str
+) -> tuple[str, str]:
+    """Return the built root release and its pinned URL, refusing disagreement."""
+    pinned_version, pinned_sha256, url = minirootfs_pin(lock_path)
+    release_path = rootfs / "etc/alpine-release"
+    if not release_path.is_file():
+        raise SystemExit(f"built rootfs has no /etc/alpine-release: {release_path}")
+    release = release_path.read_text(encoding="utf-8").strip()
+    if not release:
+        raise SystemExit("built rootfs /etc/alpine-release is empty")
+    if release != pinned_version:
+        raise SystemExit(
+            f"built rootfs release {release} does not match packages.lock minirootfs {pinned_version}"
+        )
+    if alpine_sha256 != pinned_sha256:
+        raise SystemExit(
+            f"minirootfs sha256 {alpine_sha256} does not match packages.lock {pinned_sha256}"
+        )
+    basename = url.rsplit("/", 1)[-1]
+    match = re.fullmatch(r"alpine-minirootfs-(.+)-[A-Za-z0-9_]+\.tar\.gz", basename)
+    if not match or match.group(1) != release:
+        raise SystemExit(
+            f"packages.lock minirootfs url {basename} does not identify release {release}"
+        )
+    return release, url
 
 
 def read_apk_database(path: pathlib.Path) -> list[dict[str, str]]:
@@ -36,12 +75,14 @@ def read_apk_database(path: pathlib.Path) -> list[dict[str, str]]:
 
 
 def main() -> None:
-    if len(sys.argv) != 9:
-        raise SystemExit("usage: manifest.py OUTPUT ROOTFS V86_COMMIT V86_VERSION ALPINE_SHA256 SOURCE_DATE_EPOCH SEABIOS_COMMIT APORTS_SOURCE")
+    if len(sys.argv) != 10:
+        raise SystemExit("usage: manifest.py OUTPUT ROOTFS V86_COMMIT V86_VERSION ALPINE_SHA256 SOURCE_DATE_EPOCH SEABIOS_COMMIT APORTS_SOURCE PACKAGES_LOCK")
 
     output = pathlib.Path(sys.argv[1]).resolve()
     rootfs = pathlib.Path(sys.argv[2]).resolve()
-    v86_commit, v86_version, alpine_sha256, source_date_epoch, seabios_commit, aports_source = sys.argv[3:]
+    v86_commit, v86_version, alpine_sha256, source_date_epoch, seabios_commit, aports_source = sys.argv[3:9]
+    packages_lock = pathlib.Path(sys.argv[9]).resolve()
+    release, minirootfs_url = resolve_release(rootfs, packages_lock, alpine_sha256)
     required = [
         "alpine/vmlinuz",
         "alpine/initramfs",
@@ -75,7 +116,7 @@ def main() -> None:
     package_inventory = {
         "format": "apk-installed-package-inventory/v2",
         "repository": "https://dl-cdn.alpinelinux.org/alpine/v3.24/{main,community}",
-        "release": "3.24.2",
+        "release": release,
         "alpineAports": {
             "repository": APORTS_REPOSITORY,
             "branch": APORTS_BRANCH,
@@ -110,10 +151,10 @@ def main() -> None:
 
     manifest = {
         "schemaVersion": 1,
-        "release": "alpine-3.24.2-v86-0.5.469",
+        "release": f"alpine-{release}-v86-{v86_version}",
         "guest": {
             "distribution": "Alpine Linux",
-            "release": "3.24.2",
+            "release": release,
             "architecture": "x86/i686",
             "kernelRelease": kernel_release,
             "login": "visitor (uid 1000; root account locked)",
@@ -158,7 +199,7 @@ def main() -> None:
             },
         },
         "buildInputs": {
-            "alpineMinirootfsUrl": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minirootfs-3.24.2-x86.tar.gz",
+            "alpineMinirootfsUrl": minirootfs_url,
             "alpineMinirootfsSha256": alpine_sha256,
             "sourceDateEpoch": int(source_date_epoch),
             "packageLock": "alpine/packages.lock",

@@ -203,5 +203,5 @@ python3 "$V86_SOURCE/tools/copy-to-sha256.py" --zstd "$ROOTFS" "$OUT/alpine/9p/b
 # Source-date normalization makes locally generated files deterministic. Keep
 # the original upstream package/kernel mtimes represented in package contents.
 find "$OUT" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT" "$APORTS_SOURCE"
+python3 /usr/local/bin/manifest.py "$OUT" "$ROOTFS" "$V86_COMMIT" "$V86_VERSION" "$ALPINE_SHA256" "$SOURCE_DATE_EPOCH" "$SEABIOS_COMMIT" "$APORTS_SOURCE" "$PACKAGES_LOCK"
 printf '%s\n' "Guest assets generated at $OUT"
