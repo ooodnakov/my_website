@@ -7,6 +7,11 @@
 # index main sha256 32f24504c290b7314fe3675fde15a3e37b23a752836827e3ee0548e0ab9ef00a
 # index community sha256 f61342fc046035c0047c1649c25e6e4f38848f36801ac8aa6b9d6805cb670cfb
 #
+# The guest root is a minirootfs release; pinning an older one against this
+# snapshot leaves the base packages on the previous release.
+# minirootfs 3.24.3 sha256 a73bd9ed20a5ed1503a0688957add539e10340c7ca1d9e8c06c34a76ddc5f715
+# minirootfs url https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minirootfs-3.24.3-x86.tar.gz
+#
 # The manifest resolves every installed package back to an APKBUILD, so the
 # recipe revisions must come from the snapshot that built these versions.
 # aports main 058e35320f81c4f8803a445d206ac7d3f5a5f8d2

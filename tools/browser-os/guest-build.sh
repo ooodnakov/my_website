@@ -7,8 +7,6 @@ ROOTFS="$WORK/rootfs"
 V86_SOURCE="$WORK/v86"
 V86_COMMIT=2d6f9aaa0d5357595cd7d7dd93065987ec1445b5
 SEABIOS_COMMIT=ea1b7a0733906b8425d948ae94fba63c32b1d425
-ALPINE_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86/alpine-minirootfs-3.24.2-x86.tar.gz
-ALPINE_SHA256=757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226
 ALPINE_BRANCH_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
@@ -25,6 +23,13 @@ printf '%s\n' "__BROWSER_OS_TMPFS_FSID__=$(stat -f -c %i /tmp/browser-os-initram
 PACKAGES_LOCK=/usr/local/share/browser-os/packages.lock
 [ -f "$PACKAGES_LOCK" ] || fail "missing $PACKAGES_LOCK"
 
+# The minirootfs release is part of the same snapshot as the package pins: an
+# older root leaves the base packages on the previous release and the manifest
+# cannot resolve them against this snapshot's recipes.
+ALPINE_URL=$(sed -n 's/^# minirootfs url //p' "$PACKAGES_LOCK")
+ALPINE_SHA256=$(sed -n 's/^# minirootfs .* sha256 //p' "$PACKAGES_LOCK")
+[ -n "$ALPINE_URL" ] && [ -n "$ALPINE_SHA256" ] ||
+  fail "packages.lock records no minirootfs; regenerate it with tools/browser-os/refresh-packages-lock.sh"
 wget -q "$ALPINE_URL" -O "$WORK/alpine-minirootfs.tar.gz"
 actual_alpine_sha=$(sha256sum "$WORK/alpine-minirootfs.tar.gz" | cut -d ' ' -f 1)
 [ "$actual_alpine_sha" = "$ALPINE_SHA256" ] || fail "Alpine minirootfs sha256 mismatch: $actual_alpine_sha"

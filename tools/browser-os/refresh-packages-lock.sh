@@ -75,12 +75,28 @@ done
 [ -n "$main_sha" ] && [ -n "$community_sha" ] ||
   fail "expected main and community indexes for $REPOSITORIES"
 
+# The guest root starts from a minirootfs, which is a release snapshot of its
+# own. Pinning an older one against a newer branch leaves the base packages on
+# the old release, and the manifest then cannot resolve them to recipes from
+# this snapshot. Take the minirootfs matching alpine-base in this index.
+base_version=$(awk '$1 == "alpine-base" { print $2; exit }' "$TEMP/index")
+[ -n "$base_version" ] || fail 'the index does not list alpine-base'
+MINIROOTFS_VERSION=${base_version%-r*}
+MINIROOTFS_URL="$MIRROR/$BRANCH/releases/$ARCH/alpine-minirootfs-$MINIROOTFS_VERSION-$ARCH.tar.gz"
+wget -q "$MINIROOTFS_URL" -O "$TEMP/minirootfs.tar.gz" ||
+  fail "no minirootfs for $MINIROOTFS_VERSION at $MINIROOTFS_URL"
+minirootfs_sha=$(sha256sum "$TEMP/minirootfs.tar.gz" | cut -d ' ' -f 1)
+published_sha=$(wget -qO- "$MINIROOTFS_URL.sha256" | cut -d ' ' -f 1)
+[ "$minirootfs_sha" = "$published_sha" ] ||
+  fail "minirootfs $MINIROOTFS_VERSION sha256 $minirootfs_sha != published $published_sha"
+
 # The required package set is the existing lock's names in their existing
 # order; only versions and index hashes are regenerated.
 awk '!/^#/ && NF == 1 { sub(/=.*$/, ""); print }' "$LOCK" > "$TEMP/required"
 
 python3 - "$TEMP/index" "$TEMP/required" "$LOCK" "$main_sha" "$community_sha" "$BRANCH" \
-  "$main_aports" "$community_aports" "$TOOLS/source_provenance.py" <<'PY'
+  "$main_aports" "$community_aports" "$TOOLS/source_provenance.py" \
+  "$MINIROOTFS_VERSION" "$minirootfs_sha" "$MINIROOTFS_URL" <<'PY'
 import pathlib
 import re
 import sys
@@ -95,7 +111,10 @@ import sys
     main_aports,
     community_aports,
     provenance_path,
-) = sys.argv[1:10]
+    minirootfs_version,
+    minirootfs_sha,
+    minirootfs_url,
+) = sys.argv[1:13]
 
 live = {}
 with open(index_path, encoding="utf-8") as handle:
@@ -144,6 +163,11 @@ header = [
     "#",
     f"# index main sha256 {main_sha}",
     f"# index community sha256 {community_sha}",
+    "#",
+    "# The guest root is a minirootfs release; pinning an older one against this",
+    "# snapshot leaves the base packages on the previous release.",
+    f"# minirootfs {minirootfs_version} sha256 {minirootfs_sha}",
+    f"# minirootfs url {minirootfs_url}",
     "#",
     "# The manifest resolves every installed package back to an APKBUILD, so the",
     "# recipe revisions must come from the snapshot that built these versions.",

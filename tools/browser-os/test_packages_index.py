@@ -172,6 +172,35 @@ class CommittedPackagesLockTest(unittest.TestCase):
             self.assertEqual(len(recorded), 1, f"{repository} must record one sha256")
             self.assertRegex(recorded[0].rsplit(" ", 1)[1], r"^[0-9a-f]{64}$")
 
+    def test_minirootfs_pin_is_complete(self):
+        # The build refuses a lock without both halves, and an older minirootfs
+        # against a newer index leaves the base packages unresolvable.
+        version = re.search(r"^# minirootfs (\S+) sha256 ([0-9a-f]{64})$", self.text, re.M)
+        url = re.search(r"^# minirootfs url (\S+)$", self.text, re.M)
+        self.assertIsNotNone(version, "lock must record the minirootfs version and sha256")
+        self.assertIsNotNone(url, "lock must record the minirootfs url")
+        self.assertIn(
+            f"alpine-minirootfs-{version.group(1)}-x86.tar.gz",
+            url.group(1),
+            "the recorded url must be the one for the recorded version",
+        )
+
+    def test_minirootfs_matches_the_recorded_snapshot_base_release(self):
+        # alpine-base in the pinned index and the minirootfs release have to be
+        # the same release, or base packages resolve to the wrong recipe version.
+        version = re.search(r"^# minirootfs (\S+) sha256 ", self.text, re.M).group(1)
+        pinned_base = next(
+            (line.split("=", 1)[1] for line in self.pins if line.startswith("alpine-base=")),
+            None,
+        )
+        if pinned_base is not None:
+            self.assertEqual(
+                pinned_base.rsplit("-r", 1)[0], version, "alpine-base and minirootfs disagree"
+            )
+        else:
+            # alpine-base is pulled in as a dependency, not pinned directly.
+            self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+
     def test_pins_are_unique_and_well_formed(self):
         names = [line.split("=", 1)[0] for line in self.pins]
         self.assertEqual(len(names), len(set(names)), "duplicate package pin")
