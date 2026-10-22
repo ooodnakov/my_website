@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { createHash } from "node:crypto";
 
 type LinkCaptureField = "openedTerminalUrl" | "openedTerminalLink";
@@ -43,20 +43,39 @@ async function requireGeneratedGuestManifest(page: Page) {
   }
 }
 
-function readLabeledSizes(rows: string[], label: string): [number, number][] {
+function readForegroundTuiSizes(rows: string[], label: "LESS" | "NANO"): [number, number][] {
+  const resultPattern = new RegExp(`^${label}_FG_SIZE=\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s*$`);
   return rows.flatMap((row) => {
-    const size = readLabeledSize([row], label);
-    return size ? [size] : [];
+    const match = resultPattern.exec(row.trim());
+    if (!match || Number(match[3]) === Number(match[4])) return [];
+    return [[Number(match[1]), Number(match[2])] as [number, number]];
   });
+}
+
+function hasForegroundResize(samples: [number, number][], wide: [number, number], narrow: [number, number]) {
+  return samples.some(([rows, cols]) => rows === wide[0] && cols === wide[1])
+    && samples.some(([rows, cols]) => rows === narrow[0] && cols === narrow[1]);
 }
 
 function guestResizeMonitor(label: "LESS" | "NANO") {
   const sizesFile = `/tmp/${label.toLowerCase()}-sizes`;
   return {
-    start: `: > ${sizesFile}; (while :; do stty size </dev/tty >> ${sizesFile}; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
-    stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; sort -u ${sizesFile} | while IFS= read -r size; do printf '${label}_SIZE=%s\\n' "$size"; done`,
+    start: `: > ${sizesFile}; shell_pid=$$; read -r proc_pid proc_name proc_state parent_pid shell_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat"; (while :; do read -r proc_pid proc_name proc_state parent_pid current_pgrp session tty_nr foreground_pgrp remainder < "/proc/$shell_pid/stat" || break; if [ "$foreground_pgrp" != "$shell_pgrp" ]; then size=$(stty size </dev/tty 2>/dev/null); if [ -n "$size" ]; then printf '%s %s %s\\n' "$size" "$foreground_pgrp" "$shell_pgrp" >> ${sizesFile}; fi; fi; sleep 0.1; done) </dev/null >/dev/null 2>&1 & resize_watcher=$!`,
+    stop: `kill "$resize_watcher" 2>/dev/null; wait "$resize_watcher" 2>/dev/null; while IFS= read -r size; do printf '${label}_FG_SIZE=%s\\n' "$size"; done < ${sizesFile}`,
   };
 }
+
+test("active-TUI resize selection rejects samples outside the foreground lifetime", () => {
+  const wide: [number, number] = [42, 120];
+  const narrow: [number, number] = [24, 40];
+  const beforeEntryAndAfterExit = ["LESS_SIZE=42 120", "LESS_SIZE=24 40"];
+  expect(hasForegroundResize(readForegroundTuiSizes(beforeEntryAndAfterExit, "LESS"), wide, narrow)).toBe(false);
+  expect(hasForegroundResize(readForegroundTuiSizes([
+    "LESS_FG_SIZE=42 120 701 700",
+    "LESS_FG_SIZE=24 40 701 700",
+  ], "LESS"), wide, narrow)).toBe(true);
+  expect(readForegroundTuiSizes(["NANO_FG_SIZE=42 120 700 700"], "NANO")).toEqual([]);
+});
 
 
 test("terminal resize result selection ignores the echoed command", () => {
@@ -65,40 +84,39 @@ test("terminal resize result selection ignores the echoed command", () => {
   expect(readLabeledSize([commandEcho, "TERM_WIDE= 42 120"], "TERM_WIDE")).toEqual([42, 120]);
 });
 
+
 async function clickExpectedTerminalLink(
   page: Page,
   row: Locator,
+  targetText: string,
   field: LinkCaptureField,
   isExpected: (value: string | string[] | undefined) => boolean,
 ) {
   const screenBounds = await page.locator(".xterm-screen").boundingBox();
-  if (!screenBounds) throw new Error("The terminal screen has no browser bounds");
   const rowBounds = await row.boundingBox();
-  if (!rowBounds) throw new Error("The terminal link row has no browser bounds");
+  if (!screenBounds || !rowBounds) throw new Error("The terminal link row has no browser bounds");
+  const rowText = await row.textContent() ?? "";
+  const targetIndex = rowText.lastIndexOf(targetText);
+  if (targetIndex < 0) throw new Error(`The terminal row does not contain ${JSON.stringify(targetText)}`);
   const cellWidth = await page.locator(".xterm-char-measure-element").first().evaluate((element) => element.getBoundingClientRect().width / 32);
   if (!Number.isFinite(cellWidth)) throw new Error("The terminal cell width is unavailable");
-  const step = Math.max(cellWidth / 2, 1);
+  const x = screenBounds.x + (targetIndex + targetText.length / 2) * cellWidth;
   const y = rowBounds.y + rowBounds.height / 2;
   const pointerCursor = page.locator(".xterm-cursor-pointer");
 
-  const attempted: string[] = [];
-  for (let x = screenBounds.x + step / 2; x < screenBounds.x + screenBounds.width; x += step) {
-    await page.mouse.move(x, y);
-    if (await pointerCursor.count() === 0) continue;
-    await page.mouse.click(x, y);
-    const opened = await page.evaluate((key) => {
-      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
-      return testWindow[key];
-    }, field);
-    if (opened !== undefined) attempted.push(JSON.stringify(opened));
-    if (isExpected(opened)) return;
-    await page.evaluate((key) => {
-      const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
-      testWindow[key] = undefined;
-    }, field);
+  await page.mouse.move(x, y);
+  if (await pointerCursor.count() === 0) throw new Error(`The requested terminal link ${JSON.stringify(targetText)} is not clickable at its rendered position`);
+  await page.mouse.click(x, y);
+  const opened = await page.evaluate((key) => {
+    const testWindow = window as Window & { openedTerminalUrl?: string; openedTerminalLink?: string[] };
+    return testWindow[key];
+  }, field);
+  if (!isExpected(opened)) {
+    throw new Error(`The requested terminal link opened ${JSON.stringify(opened) ?? "nothing"}`);
   }
-  throw new Error(`No link in the terminal row matched ${field}; captures: ${attempted.join(", ") || "none"}`);
 }
+
+
 
 test("shortcut strip and command palette expose primary navigation", async ({ page }) => {
   await page.goto("/");
@@ -334,7 +352,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
       return null;
     }) as typeof window.open;
   });
-  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
+  await clickExpectedTerminalLink(page, linkedRow, "lemma.txt", "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 
   await page.keyboard.type("eza -la /projects");
@@ -349,7 +367,7 @@ test("ls and eza are distinct and URL-backed files are terminal links", async ({
   await page.evaluate(() => {
     (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl = undefined;
   });
-  await clickExpectedTerminalLink(page, aRow, "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
+  await clickExpectedTerminalLink(page, aRow, "lemma.txt", "openedTerminalUrl", (value) => value === "https://www.geogebra.org/geometry/srsyvgca");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toContain("geogebra.org");
 });
 
@@ -368,7 +386,7 @@ test("same-origin relative terminal links open safely", async ({ page }) => {
       return null;
     }) as typeof window.open;
   });
-  await clickExpectedTerminalLink(page, linkedRow, "openedTerminalUrl", (value) => value === "/cv/en");
+  await clickExpectedTerminalLink(page, linkedRow, "cv.txt", "openedTerminalUrl", (value) => value === "/cv/en");
   await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalUrl?: string }).openedTerminalUrl)).toBe("/cv/en");
 });
 
@@ -389,7 +407,7 @@ for (const lang of ["en", "ru"]) {
           return null;
         }) as typeof window.open;
       });
-      await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === `/cv/${lang}` && value[1] === "_blank" && value[2] === "noopener,noreferrer");
+      await clickExpectedTerminalLink(page, linkedRow, "cv.txt", "openedTerminalLink", (value) => Array.isArray(value) && value[0] === `/cv/${lang}` && value[1] === "_blank" && value[2] === "noopener,noreferrer");
       await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual([`/cv/${lang}`, "_blank", "noopener,noreferrer"]);
     });
   }
@@ -409,7 +427,7 @@ for (const lang of ["en", "ru"]) {
         return null;
       }) as typeof window.open;
     });
-    await clickExpectedTerminalLink(page, linkedRow, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === "mailto:ooodnakov@yandex.ru" && value[1] === "_blank" && value[2] === "noopener,noreferrer");
+    await clickExpectedTerminalLink(page, linkedRow, filename, "openedTerminalLink", (value) => Array.isArray(value) && value[0] === "mailto:ooodnakov@yandex.ru" && value[1] === "_blank" && value[2] === "noopener,noreferrer");
     await expect.poll(() => page.evaluate(() => (window as Window & { openedTerminalLink?: string[] }).openedTerminalLink)).toEqual(["mailto:ooodnakov@yandex.ru", "_blank", "noopener,noreferrer"]);
   });
 }
@@ -431,25 +449,43 @@ test("development missing browser OS assets return a real 404", async ({ request
   expect(await response.text()).not.toContain("<!doctype html>");
 });
 
-test("the opt-in worker surfaces a missing manifest and returns to lightweight mode", async ({ page }) => {
-  test.setTimeout(30_000);
+test("cold opt-in requests a missing manifest and returns to lightweight mode across sessions", async ({ page, context }) => {
+  test.setTimeout(60_000);
   const expectedManifestPath = `/browser-os/${GUEST_RELEASE}/manifest.json`;
-  const missingManifestResponse = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === expectedManifestPath,
-  { timeout: 15_000 });
-  await page.route(`**${expectedManifestPath}`, (route) => route.fulfill({
+  const manifestRequests: Request[] = [];
+  const workerUrls: string[] = [];
+  const runtimeErrors: string[] = [];
+  context.on("request", (request) => {
+    if (new URL(request.url()).pathname === expectedManifestPath) manifestRequests.push(request);
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
+  await context.route(`**${expectedManifestPath}`, (route) => route.fulfill({
     status: 404,
     contentType: "application/json",
     body: JSON.stringify({ message: "Browser OS asset not found" }),
   }));
   await page.goto("/en");
-  await page.getByRole("button", { name: "Start opt-in OS preview" }).click();
-  const response = await missingManifestResponse;
-  expect(response.status()).toBe(404);
-  await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
-  await expect(page.getByRole("button", { name: "Start opt-in OS preview" })).toBeVisible();
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  const optIn = page.getByRole("button", { name: "Start opt-in OS preview" });
+  await expect(optIn).toBeVisible();
+
+  for (const expectedCount of [1, 2]) {
+    await optIn.click();
+    const stop = page.getByRole("button", { name: "Stop · lightweight mode" });
+    await expect(stop).toBeVisible({ timeout: 15_000 });
+    await expect.poll(
+      () => manifestRequests.length,
+      { timeout: 15_000, message: `manifest requests ${manifestRequests.length}; workers: ${workerUrls.join(", ") || "none"}; page errors: ${runtimeErrors.join("; ") || "none"}` },
+    ).toBe(expectedCount);
+    const response = await manifestRequests[expectedCount - 1].response();
+    expect(response?.status()).toBe(404);
+    await expect(page.getByText("OS preview failed", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Stop · lightweight mode" }).click();
+    await expect(optIn).toBeVisible();
+  }
+  expect(manifestRequests).toHaveLength(2);
 });
 
 test("the opt-in worker rejects an unpinned guest manifest before requesting assets", async ({ page }) => {
@@ -595,13 +631,13 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(wideSize[0], { timeout: 30_000 });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(screen.locator(".xterm-rows > div")).toHaveCount(narrowSize[0], { timeout: 30_000 });
+  await expect(screen).toContainText("LESS_LINE_1");
   await page.keyboard.press("q");
-  let lessSizes: [number, number][] = [];
+  let lessForegroundSizes: [number, number][] = [];
   await expect.poll(async () => {
     const rows = await screen.locator(".xterm-rows > div").allTextContents();
-    lessSizes = readLabeledSizes(rows, "LESS_SIZE");
-    return lessSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
-      && lessSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+    lessForegroundSizes = readForegroundTuiSizes(rows, "LESS");
+    return hasForegroundResize(lessForegroundSizes, wideSize, narrowSize);
   }, { timeout: 30_000 }).toBe(true);
   await input.click();
   await page.keyboard.type("printf 'AFTER_LESS=%s\\n' \"$((20+22))\"");
@@ -631,12 +667,11 @@ test("opt-in guest worker keeps raw UTF-8 input and Ctrl+C independent of disabl
       && renderedRows.some((line) => line.trim() === "EDITOR_TEXT");
   }, { timeout: 30_000 }).toBe(true);
   await page.keyboard.press("Control+X");
-  let nanoSizes: [number, number][] = [];
+  let nanoForegroundSizes: [number, number][] = [];
   await expect.poll(async () => {
     const rows = await screen.locator(".xterm-rows > div").allTextContents();
-    nanoSizes = readLabeledSizes(rows, "NANO_SIZE");
-    return nanoSizes.some(([rows, cols]) => rows === wideSize[0] && cols === wideSize[1])
-      && nanoSizes.some(([rows, cols]) => rows === narrowSize[0] && cols === narrowSize[1]);
+    nanoForegroundSizes = readForegroundTuiSizes(rows, "NANO");
+    return hasForegroundResize(nanoForegroundSizes, wideSize, narrowSize);
   }, { timeout: 30_000 }).toBe(true);
   await page.setViewportSize({ width: 1280, height: 900 });
   await input.click();
