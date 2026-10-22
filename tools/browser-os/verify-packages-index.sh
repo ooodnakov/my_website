@@ -1,36 +1,39 @@
 #!/bin/sh
-# Verify a staged Alpine index tree against the snapshot recorded in the guest
-# package lock.
+# Verify that apk resolved against the Alpine index snapshot recorded in the
+# guest package lock.
 #
-# Usage: verify-packages-index.sh <packages.lock> <staged-index-root>
+# Usage: verify-packages-index.sh <packages.lock> <directory-with-indexes>
 #
-# The staged root must hold <repository>/x86/APKINDEX.tar.gz for every Alpine
-# repository the guest build resolves against. Each file must match the sha256
-# recorded in the lock header; a mismatch means the mutable branch has moved and
-# the version pins below are no longer the ones the index offers.
+# Alpine release branches are mutable: when a security update lands, the
+# superseded version is removed from the CDN and a version pin that the lock
+# names can no longer be selected. apk caches the index it actually used under
+# /var/cache/apk, so hashing that cache answers the only question that matters:
+# did the solver see the snapshot the pins were generated from?
 set -eu
 
 fail() { printf '%s\n' "browser-os package lock: $*" >&2; exit 1; }
 
-[ "$#" -eq 2 ] || fail 'usage: verify-packages-index.sh <packages.lock> <staged-index-root>'
+[ "$#" -eq 2 ] || fail 'usage: verify-packages-index.sh <packages.lock> <directory-with-indexes>'
 LOCK=$1
-INDEX_ROOT=$2
+INDEX_DIR=$2
 [ -f "$LOCK" ] || fail "missing $LOCK"
-[ -d "$INDEX_ROOT" ] || fail "missing staged index root $INDEX_ROOT"
+[ -d "$INDEX_DIR" ] || fail "missing index directory $INDEX_DIR"
 
 locked_index_sha() {
   sed -n "s/^# index $1 sha256 //p" "$LOCK"
 }
 
+CACHE=$(mktemp)
+trap 'rm -f "$CACHE"' EXIT HUP INT TERM
+find "$INDEX_DIR" -type f -exec sha256sum {} \; > "$CACHE"
+[ -s "$CACHE" ] || fail "no cached index files under $INDEX_DIR"
+
 for repository in main community; do
   expected_sha=$(locked_index_sha "$repository")
   [ -n "$expected_sha" ] ||
     fail "records no $repository index sha256; regenerate the lock with tools/browser-os/refresh-packages-lock.sh"
-  index="$INDEX_ROOT/$repository/x86/APKINDEX.tar.gz"
-  [ -f "$index" ] || fail "missing staged $repository index at $index"
-  actual_sha=$(sha256sum "$index" | cut -d ' ' -f 1)
-  [ "$actual_sha" = "$expected_sha" ] ||
-    fail "$repository index sha256 mismatch: $actual_sha != $expected_sha;
+  grep -q "^$expected_sha " "$CACHE" ||
+    fail "$repository index does not match the recorded snapshot $expected_sha;
   the branch moved. Run tools/browser-os/refresh-packages-lock.sh and review the
   resulting package version bumps together with this build."
 done

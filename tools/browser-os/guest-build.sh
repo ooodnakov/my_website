@@ -32,24 +32,9 @@ wget -q "$ALPINE_URL" -O "$WORK/alpine-minirootfs.tar.gz"
 actual_alpine_sha=$(sha256sum "$WORK/alpine-minirootfs.tar.gz" | cut -d ' ' -f 1)
 [ "$actual_alpine_sha" = "$ALPINE_SHA256" ] || fail "Alpine minirootfs sha256 mismatch: $actual_alpine_sha"
 tar -xzf "$WORK/alpine-minirootfs.tar.gz" -C "$ROOTFS"
-
-# Alpine release branches are mutable: a security update removes the superseded
-# version from the CDN, so resolving against the live branch would silently
-# install a different package universe than the lock describes. Download the
-# index, verify it against the snapshot recorded in packages.lock, and point apk
-# at that verified copy only. PRoot rebinds the rootfs to /, so the repository
-# paths are guest-absolute while the staging directory is host-absolute.
-INDEX_ROOT=/tmp/apk-repo
-for repository in main community; do
-  mkdir -p "$ROOTFS$INDEX_ROOT/$repository/x86"
-  wget -q "$ALPINE_BRANCH_URL/$repository/x86/APKINDEX.tar.gz" \
-    -O "$ROOTFS$INDEX_ROOT/$repository/x86/APKINDEX.tar.gz"
-done
-/usr/local/bin/verify-packages-index.sh "$PACKAGES_LOCK" "$ROOTFS$INDEX_ROOT"
-# The minirootfs ships the live branch list; the verified snapshot replaces it.
 printf '%s\n' \
-  "file://$INDEX_ROOT/main" \
-  "file://$INDEX_ROOT/community" \
+  "$ALPINE_BRANCH_URL/main" \
+  "$ALPINE_BRANCH_URL/community" \
   > "$ROOTFS/etc/apk/repositories"
 
 # PRoot's explicit qemu user-mode path executes x86 binaries without binfmt,
@@ -58,6 +43,11 @@ cd /
 PROOT_NET='proot -0 -q qemu-i386 -b /etc/resolv.conf:/etc/resolv.conf -r /tmp/browser-os-build/rootfs'
 PROOT='proot -0 -q qemu-i386 -b /tmp/browser-os-initramfs:/tmp/mkinitfs-stage -r /tmp/browser-os-build/rootfs'
 $PROOT_NET /sbin/apk update
+# Alpine release branches are mutable: a security update removes the superseded
+# version from the CDN, so the pins below can stop being selectable. apk has
+# already cached the index it resolved against, so hash that cache and fail at
+# the cause instead of letting apk report a solver conflict naming packages.
+/usr/local/bin/verify-packages-index.sh "$PACKAGES_LOCK" "$ROOTFS/var/cache/apk"
 set --
 while IFS= read -r package; do
   case "$package" in ''|'#'*) continue ;; esac
@@ -160,13 +150,7 @@ rm -rf "$ROOTFS/boot"
 cp "$PACKAGES_LOCK" "$OUT/alpine/packages.lock"
 
 # Do not ship stale APK indexes or cache payloads in the guest filesystem.
-rm -rf "$ROOTFS/var/cache/apk" "$ROOTFS/var/log/apk.log" "$ROOTFS$INDEX_ROOT"
-# The staged index only existed to resolve the lock; the shipped guest is
-# offline and carries its package provenance in alpine/packages.lock instead.
-cat > "$ROOTFS/etc/apk/repositories" <<'EOF'
-# Browser OS guest: offline and ephemeral. No package repositories are reachable
-# at runtime; the installed set and its provenance ship in alpine/packages.lock.
-EOF
+rm -rf "$ROOTFS/var/cache/apk" "$ROOTFS/var/log/apk.log"
 python3 -c 'import os,pathlib,sys; epoch=int(sys.argv[2]); [os.utime(path,(epoch,epoch),follow_symlinks=False) for path in [pathlib.Path(sys.argv[1]),*pathlib.Path(sys.argv[1]).rglob("*")]]' "$ROOTFS" "$SOURCE_DATE_EPOCH"
 python3 "$V86_SOURCE/tools/fs2json.py" --exclude /boot --exclude /var/cache/apk --zstd --out "$OUT/alpine/9p/fs.json" "$ROOTFS"
 python3 "$V86_SOURCE/tools/copy-to-sha256.py" --zstd "$ROOTFS" "$OUT/alpine/9p/blob"

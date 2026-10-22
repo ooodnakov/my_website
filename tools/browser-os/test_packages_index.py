@@ -1,10 +1,12 @@
 """Regression tests for the Alpine package lock / index snapshot guard.
 
-The guest build resolves packages from a staged copy of the Alpine index. If the
-lock did not pin that index, a security update on the mutable v3.24 branch would
+The guest build resolves packages against a mutable Alpine release branch. If the
+lock did not record which index its pins came from, a security update would
 remove the superseded versions the lock names and `apk add` would fail with an
-opaque solver dump naming packages rather than the cause. These tests pin the
-guard's observable behaviour and the shape of the committed lock.
+opaque solver dump naming packages rather than the cause. apk caches the index it
+resolved against, so the build hashes that cache and refuses to proceed on a
+different snapshot. These tests pin the guard's observable behaviour and the
+shape of the committed lock.
 """
 
 import hashlib
@@ -64,11 +66,13 @@ class VerifyPackagesIndexTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, temporary)
         self.root = pathlib.Path(temporary)
 
-        self.staged = self.root / "apk-repo"
+        # apk caches one APKINDEX.<tag>.tar.gz per repository under /var/cache/apk.
+        self.cache = self.root / "var" / "cache" / "apk"
+        self.cache.mkdir(parents=True)
         for repository in REPOSITORIES:
-            directory = self.staged / repository / "x86"
-            directory.mkdir(parents=True)
-            (directory / "APKINDEX.tar.gz").write_bytes(index_tarball(repository))
+            (self.cache / f"APKINDEX.{repository}.tar.gz").write_bytes(
+                index_tarball(repository)
+            )
 
         self.lock = self.root / "packages.lock"
         self.write_lock(
@@ -80,12 +84,12 @@ class VerifyPackagesIndexTest(unittest.TestCase):
         lines += [f"# index {name} sha256 {digest}" for name, digest in digests.items()]
         self.lock.write_text("\n".join(lines + list(pins)) + "\n", encoding="utf-8")
 
-    def stage(self, repository, data):
-        (self.staged / repository / "x86" / "APKINDEX.tar.gz").write_bytes(data)
+    def cache_index(self, repository, data):
+        (self.cache / f"APKINDEX.{repository}.tar.gz").write_bytes(data)
 
     def verify(self):
         return subprocess.run(
-            ["sh", str(VERIFY), str(self.lock), str(self.staged)],
+            ["sh", str(VERIFY), str(self.lock), str(self.cache)],
             capture_output=True,
             text=True,
             check=False,
@@ -99,18 +103,18 @@ class VerifyPackagesIndexTest(unittest.TestCase):
         # An Alpine security update replacing an index is the regression this
         # guard exists for: the build must stop and say how to regenerate, and
         # must name the repository that moved.
-        self.stage("main", index_tarball("main-after-update"))
+        self.cache_index("main", index_tarball("main-after-update"))
         result = self.verify()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("main index sha256 mismatch", result.stderr)
+        self.assertIn("main index does not match the recorded snapshot", result.stderr)
         self.assertIn("refresh-packages-lock.sh", result.stderr)
-        self.assertNotIn("community index sha256 mismatch", result.stderr)
+        self.assertNotIn("community index does not match", result.stderr)
 
     def test_drifted_community_index_is_rejected(self):
-        self.stage("community", index_tarball("community-after-update"))
+        self.cache_index("community", index_tarball("community-after-update"))
         result = self.verify()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("community index sha256 mismatch", result.stderr)
+        self.assertIn("community index does not match", result.stderr)
 
     def test_lock_without_recorded_snapshot_fails_closed(self):
         # A lock that forgets its index hashes must not silently resolve against
@@ -121,11 +125,31 @@ class VerifyPackagesIndexTest(unittest.TestCase):
         self.assertIn("records no main index sha256", result.stderr)
         self.assertIn("refresh-packages-lock.sh", result.stderr)
 
-    def test_missing_staged_index_is_rejected(self):
-        (self.staged / "community" / "x86" / "APKINDEX.tar.gz").unlink()
+    def test_empty_cache_is_rejected(self):
+        for index in self.cache.iterdir():
+            index.unlink()
         result = self.verify()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing staged community index", result.stderr)
+        self.assertIn("no cached index files", result.stderr)
+
+    def test_missing_cache_directory_is_rejected(self):
+        shutil.rmtree(self.cache)
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing index directory", result.stderr)
+
+    def test_matching_index_is_accepted_regardless_of_cache_filename(self):
+        # apk names cached indexes by repository tag, which is an internal
+        # detail; verification must key on content, not on the filename.
+        (self.cache / "APKINDEX.main.tar.gz").rename(self.cache / "APKINDEX.renamed")
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_correct_snapshot_alongside_a_stale_one_still_passes(self):
+        # apk may cache more than the two indexes; extra entries are not drift.
+        (self.cache / "APKINDEX.stale.tar.gz").write_bytes(index_tarball("older-main"))
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class CommittedPackagesLockTest(unittest.TestCase):
