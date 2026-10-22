@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Root-owned COM1/COM2 broker for the disposable Browser OS guest."""
 
+import bisect
 import errno
 import fcntl
 import hashlib
@@ -171,9 +172,12 @@ class Broker:
         self.shell_ready_sent = False
         self.pending_shell_state = None
         self.zle_input_ordinal = 0
+        self.zle_generation = 0
         self.zle_state = 0
         self.com1_input = 0
         self.com1_forwarded = 0
+        self.com1_editor_forwarded = 0
+        self.com1_signal_positions = []
         self.input_queue = bytearray()
         self.gated_input = bytearray()
         self.fence = None
@@ -408,7 +412,8 @@ class Broker:
             if not int_field(fence_id, 1, MAX_INT) or not int_field(target, 0, MAX_INT) or fence_id <= self.last_fence_id or self.fence is not None:
                 raise ValueError("stale or concurrent fence")
             self.last_fence_id = fence_id
-            self.fence = {"id": fence_id, "target": target, "deadline": time.monotonic() + 1.0}
+            self.fence = {"id": fence_id, "target": target, "generation": self.zle_generation,
+                          "deadline": time.monotonic() + 1.0}
             self.try_fence()
         elif op == "dispatchAction":
             expected = {"v", "sessionId", "seq", "op", "action", "requestId", "fenceId", "inputBytes"}
@@ -450,6 +455,36 @@ class Broker:
             self.zle_control_parent.close()
             self.zle_control_parent = None
 
+    def isig_characters(self):
+        """Characters the line discipline consumes instead of the editor."""
+        try:
+            attributes = termios.tcgetattr(self.pty_master)
+        except (OSError, termios.error):
+            return None
+        if not attributes[0] & termios.ISIG:
+            return frozenset()
+        control = attributes[6]
+        return frozenset(
+            byte for byte in (control[termios.VINTR], control[termios.VQUIT],
+                              control[termios.VSUSP])
+            if byte and byte != b"\x00"
+        )
+
+    def note_forwarded(self, chunk):
+        """Classify bytes actually written to the PTY as editor or signal input."""
+        signals = self.isig_characters()
+        base = self.com1_forwarded
+        for offset, value in enumerate(chunk):
+            if signals is not None and bytes((value,)) in signals:
+                self.com1_signal_positions.append(base + offset)
+            else:
+                self.com1_editor_forwarded += 1
+        self.com1_forwarded = base + len(chunk)
+
+    def editor_bytes_before(self, target):
+        index = bisect.bisect_left(self.com1_signal_positions, target)
+        return target - index
+
     def process_zle_control(self):
         try:
             record = self.zle_control_parent.recv(64)
@@ -462,19 +497,30 @@ class Broker:
             self.fail_zle_control("badFrame")
             return
         if (
-            len(record) != 16
-            or record[:6] != b"BOSZ\x01\x01"
+            len(record) != 24
+            or record[:5] != b"BOSZ\x02"
             or record[7] != 0
             or record[6] not in {0, 1}
         ):
             self.fail_zle_control("badFrame")
             return
         ordinal = struct.unpack(">Q", record[8:16])[0]
-        if ordinal < self.zle_input_ordinal or ordinal > self.com1_forwarded:
+        generation = struct.unpack(">Q", record[16:24])[0]
+        if ordinal < self.zle_input_ordinal or ordinal > self.com1_editor_forwarded:
             self.fail_zle_control("badValue")
             return
+        if generation < self.zle_generation:
+            self.fail_zle_control("badValue")
+            return
+        crossed = generation != self.zle_generation
         self.zle_input_ordinal = ordinal
+        self.zle_generation = generation
         self.zle_state = record[6]
+        if crossed and self.fence is not None and self.fence["generation"] != generation:
+            self.frame("inputFenceAck", fenceId=self.fence["id"],
+                       inputBytes=self.fence["target"], state="unknown")
+            self.abort_fence()
+            return
         self.try_fence()
 
     def try_fence(self):
@@ -487,9 +533,10 @@ class Broker:
             return
         if self.com1_input < target or self.com1_forwarded < target:
             return
-        if self.zle_input_ordinal < target:
+        expected = self.editor_bytes_before(target)
+        if self.zle_input_ordinal < expected:
             return
-        state = "busy" if self.zle_input_ordinal == target and self.zle_state != 1 else "unknown"
+        state = "busy" if self.zle_input_ordinal == expected and self.zle_state != 1 else "unknown"
         self.frame("inputFenceAck", fenceId=self.fence["id"], inputBytes=target, state=state)
         self.abort_fence()
 
@@ -690,7 +737,8 @@ class Broker:
             if self.fence is not None and now >= self.fence["deadline"]:
                 if not self.fence.get("acknowledged"):
                     if self.com1_input >= self.fence["target"] and self.com1_forwarded >= self.fence["target"]:
-                        state = "busy" if self.zle_input_ordinal == self.fence["target"] and self.zle_state != 1 else "unknown"
+                        expected = self.editor_bytes_before(self.fence["target"])
+                        state = "busy" if self.zle_input_ordinal == expected and self.zle_state != 1 else "unknown"
                         self.frame("inputFenceAck", fenceId=self.fence["id"], inputBytes=self.fence["target"], state=state)
                     else:
                         self.error("badValue")
@@ -740,12 +788,13 @@ class Broker:
                 if data:
                     self.com1_output.extend(data)
             if self.pty_master in writable and self.input_queue:
+                pending = bytes(self.input_queue[:4096])
                 try:
                     count = self.flush_fd(self.pty_master, self.input_queue)
                 except OSError:
                     return
                 if count:
-                    self.com1_forwarded += count
+                    self.note_forwarded(pending[:count])
                     self.try_fence()
             if self.com1 in writable:
                 self.flush_fd(self.com1, self.com1_output)

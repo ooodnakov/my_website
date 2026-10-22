@@ -43,7 +43,7 @@
  
  #ifdef HAVE_POLL_H
  # include <poll.h>
-@@ -338,6 +342,51 @@
+@@ -338,6 +342,58 @@
  static int kungetsz;
  
  /*
@@ -52,6 +52,8 @@
 + */
 +/**/
 +mod_export unsigned long long browser_os_input_ordinal;
++/**/
++mod_export unsigned long long browser_os_editor_generation;
 +/**/
 +mod_export int browser_os_multibyte_pending;
 +/**/
@@ -69,20 +71,25 @@
 +static void
 +browser_os_report_safe_point(void)
 +{
-+    unsigned char record[16];
++    unsigned char record[24];
 +    unsigned long long ordinal = browser_os_input_ordinal;
++    unsigned long long generation = browser_os_editor_generation;
 +    int i;
 +
 +    if (browser_os_control_fd < 0)
 +	return;
 +    memcpy(record, "BOSZ", 4);
-+    record[4] = 1;
++    record[4] = 2;
 +    record[5] = 1;
 +    record[6] = browser_os_clean_prompt() ? 1 : 0;
 +    record[7] = 0;
 +    for (i = 15; i >= 8; i--) {
 +	record[i] = ordinal & 0xff;
 +	ordinal >>= 8;
++    }
++    for (i = 23; i >= 16; i--) {
++	record[i] = generation & 0xff;
++	generation >>= 8;
 +    }
 +    if (send(browser_os_control_fd, record, sizeof(record), MSG_NOSIGNAL) !=
 +	sizeof(record)) {
@@ -95,7 +102,7 @@
   * Note on ungetbyte and ungetbytes for the confused (pws):
   * these are low level and deal with bytes before they
   * have been converted into (possibly wide) characters.
-@@ -889,8 +938,11 @@
+@@ -889,8 +945,11 @@
  		    *timeout = 1;
  		return lastchar = EOF;
  	    }
@@ -108,7 +115,7 @@
  	    if (r == 0) {
  		/* The test for IGNOREEOF was added to make zsh ignore ^Ds
  		   that were typed while commands are running.  Unfortunately
-@@ -1004,6 +1056,7 @@
+@@ -1004,6 +1063,7 @@
      if (inchar == EOF) {
  	/* End of input, so reset the shift state. */
  	memset(&mbs, 0, sizeof mbs);
@@ -116,7 +123,7 @@
  	return lastchar_wide = WEOF;
      }
  
-@@ -1018,10 +1071,14 @@
+@@ -1018,10 +1078,14 @@
  	     * Invalid input.  Hmm, what's the right thing to do here?
  	     */
  	    memset(&mbs, 0, sizeof mbs);
@@ -132,7 +139,7 @@
  
  	/*
  	 * Always apply KEYTIMEOUT to the remains of the input
-@@ -1034,6 +1091,7 @@
+@@ -1034,6 +1098,7 @@
  	lastchar_wide_valid = 1;
  	if (inchar == EOF) {
  	    memset(&mbs, 0, sizeof mbs);
@@ -140,7 +147,7 @@
  	    if (timeout)
  	    {
  		/*
-@@ -1125,6 +1183,7 @@
+@@ -1125,6 +1190,7 @@
       */
      while (!done && !errflag && !exit_pending) {
  	UNMETACHECK();
@@ -148,7 +155,16 @@
  
  	statusline = NULL;
  	vilinerange = 0;
-@@ -2216,6 +2275,21 @@
+@@ -1327,6 +1393,8 @@
+      */
+     queue_signals();
+ 
++    if (!zle_recursive)
++	browser_os_editor_generation++;
+     zleactive = 1;
+     resetneeded = 1;
+     /*
+@@ -2216,6 +2284,21 @@
  setup_(UNUSED(Module m))
  {
      char **bpaste;

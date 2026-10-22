@@ -233,11 +233,14 @@ class FenceOrderingTests(unittest.TestCase):
         broker = BROKER.Broker.__new__(BROKER.Broker)
         broker.com1_input = 0
         broker.com1_forwarded = 0
+        broker.com1_editor_forwarded = 0
+        broker.com1_signal_positions = []
         broker.zle_input_ordinal = 0
+        broker.zle_generation = 1
         broker.zle_state = 0
         broker.input_queue = bytearray()
         broker.gated_input = bytearray()
-        broker.fence = {"id": 7, "target": target, "deadline": 10**9}
+        broker.fence = {"id": 7, "target": target, "generation": 1, "deadline": 10**9}
         broker.frames = []
         broker.errors = []
         broker.frame = lambda operation, **fields: broker.frames.append((operation, fields))
@@ -301,6 +304,39 @@ class FenceOrderingTests(unittest.TestCase):
         self.assertIsNone(broker.fence)
 
 
+    def test_signal_byte_is_excluded_from_the_fence_watermark(self):
+        broker = self.broker_with_fence(10)
+        broker.com1_signal_positions = [9]
+        broker.com1_input = 10
+        broker.com1_forwarded = 10
+        broker.com1_editor_forwarded = 9
+        broker.zle_input_ordinal = 9
+        broker.zle_state = 1
+
+        broker.try_fence()
+
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7,
+            "inputBytes": 10,
+            "state": "unknown",
+        })])
+        self.assertIsNone(broker.fence)
+        self.assertEqual(broker.errors, [])
+
+    def test_editor_ordinal_still_gates_a_fence_before_the_signal(self):
+        broker = self.broker_with_fence(10)
+        broker.com1_signal_positions = [9]
+        broker.input_bytes(b"abcdefghi")
+        broker.com1_forwarded = 10
+        broker.com1_editor_forwarded = 9
+        broker.zle_input_ordinal = 8
+        broker.zle_state = 1
+
+        broker.try_fence()
+
+        self.assertEqual(broker.frames, [])
+        self.assertIsNotNone(broker.fence)
+
     def test_ctrl_c_cancels_an_active_fence_and_releases_every_byte_in_order(self):
         broker = self.broker_with_fence(3)
         broker.input_bytes(b"abc")
@@ -311,6 +347,88 @@ class FenceOrderingTests(unittest.TestCase):
         self.assertIsNone(broker.fence)
         self.assertEqual(broker.frames, [])
         self.assertEqual(broker.errors, [])
+
+
+class SafePointRecordTests(unittest.TestCase):
+    class Channel:
+        def __init__(self, *records):
+            self.records = list(records)
+            self.closed = False
+
+        def recv(self, _size):
+            if not self.records:
+                raise __import__("BlockingIOError").BlockingIOError()
+            return self.records.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    def broker(self, record):
+        broker = BROKER.Broker.__new__(BROKER.Broker)
+        broker.zle_control_parent = self.Channel(record)
+        broker.zle_input_ordinal = 0
+        broker.zle_generation = 1
+        broker.zle_state = 1
+        broker.com1_input = 3
+        broker.com1_forwarded = 3
+        broker.com1_editor_forwarded = 5
+        broker.com1_signal_positions = []
+        broker.gated_input = bytearray()
+        broker.fence = {"id": 7, "target": 3, "generation": 1, "deadline": 10**9}
+        broker.frames = []
+        broker.errors = []
+        broker.frame = lambda operation, **fields: broker.frames.append((operation, fields))
+        broker.error = broker.errors.append
+        return broker
+
+    def record(self, ordinal, generation, state=1, version=2):
+        return b"BOSZ" + bytes((version, 1, state, 0)) + ordinal.to_bytes(8, "big") + generation.to_bytes(8, "big")
+
+    def test_generation_crossing_cancels_a_fence_created_before_it(self):
+        broker = self.broker(self.record(5, 2))
+
+        broker.process_zle_control()
+
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7,
+            "inputBytes": 3,
+            "state": "unknown",
+        })])
+        self.assertIsNone(broker.fence)
+        self.assertEqual(broker.zle_generation, 2)
+        self.assertEqual(broker.errors, [])
+
+    def test_same_generation_fence_uses_the_editor_watermark(self):
+        broker = self.broker(self.record(5, 1))
+
+        broker.process_zle_control()
+
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7,
+            "inputBytes": 3,
+            "state": "unknown",
+        })])
+        self.assertIsNone(broker.fence)
+
+    def test_editor_ordinal_above_forwarded_editor_bytes_fails_closed(self):
+        broker = self.broker(self.record(6, 1))
+        channel = broker.zle_control_parent
+
+        broker.process_zle_control()
+
+        self.assertEqual(broker.errors, ["badValue"])
+        self.assertTrue(channel.closed)
+        self.assertIsNotNone(broker.fence)
+
+    def test_version_one_record_is_rejected(self):
+        broker = self.broker(self.record(5, 1, version=1)[:16])
+        channel = broker.zle_control_parent
+
+        broker.process_zle_control()
+
+        self.assertEqual(broker.errors, ["badFrame"])
+        self.assertTrue(channel.closed)
+        self.assertIsNotNone(broker.fence)
 
 
 class SequenceBoundaryTests(unittest.TestCase):
