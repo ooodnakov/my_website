@@ -60,7 +60,15 @@ $PROOT_NET /sbin/apk --no-scripts add "$@"
 APORTS_SOURCE="$WORK/aports"
 # GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
 APORTS_MIRROR=https://github.com/alpinelinux/aports.git
-git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
+# A full-history clone of aports is large enough to time out on slow links and
+# is never used: provenance reads only the recorded revisions. Take the branch
+# head shallow, then fetch the exact snapshot commits below.
+git clone --depth=1 --filter=blob:none --no-checkout --single-branch \
+  --branch "$(python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_BRANCH
+print(APORTS_BRANCH)')" \
+  "$APORTS_MIRROR" "$APORTS_SOURCE"
 # source_provenance.py owns the aports revisions the manifest resolves against;
 # duplicating them here let the clone and the manifest drift apart.
 aports_commits() {
