@@ -7,6 +7,11 @@
 # index main sha256 32f24504c290b7314fe3675fde15a3e37b23a752836827e3ee0548e0ab9ef00a
 # index community sha256 f61342fc046035c0047c1649c25e6e4f38848f36801ac8aa6b9d6805cb670cfb
 #
+# The manifest resolves every installed package back to an APKBUILD, so the
+# recipe revisions must come from the snapshot that built these versions.
+# aports main 058e35320f81c4f8803a445d206ac7d3f5a5f8d2
+# aports community b5ea02d6cfc7a65d5ba50f17fc1c143defb9dcc4
+#
 # Regenerate with tools/browser-os/refresh-packages-lock.sh and review the
 # resulting version bump as part of the change that needs it.
 

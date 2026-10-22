@@ -12,9 +12,6 @@ ALPINE_SHA256=757f07c5a3476ba3947cfbea2323b7f02fb6fb2fba8a3a3c2b9d17f0a54c9226
 ALPINE_BRANCH_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24
 V86_VERSION=0.5.469
 V86_NPM_INTEGRITY=sha512-Yf7litYx7eOIf3xuijD//nViEJK+qy+TUwVNK/tufvlT9d5RkavHPH5qlvcuvsAkOgtHOd+jVT8wZeZqwJL5/A==
-APORTS_MAIN_COMMIT=d5a34efc88bbe8d18737fda28125071c4aef8517
-APORTS_COMMUNITY_COMMIT=7805e4fb29efc937492a3173e55dc72ecd9fcdaf
-APORTS_OPENSSL_COMMIT=013edf8b29199933e8ea34dde460b5584b979042
 SOURCE_DATE_EPOCH=1767225600
 export SOURCE_DATE_EPOCH
 
@@ -58,10 +55,24 @@ APORTS_SOURCE="$WORK/aports"
 # GitHub mirror of Alpine's canonical GitLab aports repository for hosted CI access.
 APORTS_MIRROR=https://github.com/alpinelinux/aports.git
 git clone --filter=blob:none --no-checkout "$APORTS_MIRROR" "$APORTS_SOURCE"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_COMMUNITY_COMMIT"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_MAIN_COMMIT"
-git -C "$APORTS_SOURCE" fetch --depth=1 origin "$APORTS_OPENSSL_COMMIT"
-git -C "$APORTS_SOURCE" checkout --detach "$APORTS_COMMUNITY_COMMIT"
+# source_provenance.py owns the aports revisions the manifest resolves against;
+# duplicating them here let the clone and the manifest drift apart.
+aports_commits() {
+  python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_COMMITS, APORTS_RECIPE_OVERRIDES
+for commit in sorted(set(APORTS_COMMITS.values()) | {c for _area, c in APORTS_RECIPE_OVERRIDES.values()}):
+    print(commit)'
+}
+for commit in $(aports_commits); do
+  git -C "$APORTS_SOURCE" fetch --depth=1 origin "$commit"
+done
+git -C "$APORTS_SOURCE" checkout --detach "$(
+  python3 -c 'import sys
+sys.path.insert(0, "/usr/local/bin")
+from source_provenance import APORTS_COMMITS
+print(APORTS_COMMITS["community"])'
+)"
 
 $PROOT /bin/sh -ec '
   adduser -D -u 1000 -h /home/visitor -s /bin/zsh -g "Browser OS visitor" visitor

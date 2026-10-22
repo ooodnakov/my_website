@@ -15,6 +15,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -180,6 +181,52 @@ class CommittedPackagesLockTest(unittest.TestCase):
             self.assertEqual(separator, "=", line)
             self.assertRegex(name, PACKAGE_NAME)
             self.assertRegex(version, PACKAGE_VERSION)
+
+
+class SnapshotAgreementTest(unittest.TestCase):
+    """The manifest resolves installed packages to APKBUILDs at aports revisions.
+
+    Those revisions must come from the same snapshot the pins were taken from,
+    otherwise provenance verification fails on the first bumped package. The lock
+    header records the snapshot, so the two must not be able to disagree.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(TOOLS))
+        self.addCleanup(sys.path.pop, 0)
+        from source_provenance import APORTS_COMMITS, APORTS_RECIPE_OVERRIDES
+
+        self.commits = APORTS_COMMITS
+        self.overrides = APORTS_RECIPE_OVERRIDES
+        self.recorded = {}
+        for line in LOCK.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^# aports (\S+) ([0-9a-f]{40})$", line)
+            if match:
+                self.recorded[match.group(1)] = match.group(2)
+
+    def test_lock_records_the_aports_snapshot(self):
+        self.assertEqual(
+            set(self.recorded), {"main", "community"}, "lock must record both aports revisions"
+        )
+
+    def test_aports_commits_match_the_recorded_snapshot(self):
+        for area in ("main", "community"):
+            self.assertEqual(
+                self.commits[area],
+                self.recorded[area],
+                f"APORTS_COMMITS[{area!r}] must match the lock's snapshot",
+            )
+
+    def test_recipe_overrides_use_the_recorded_main_snapshot(self):
+        for origin, (area, commit) in self.overrides.items():
+            self.assertEqual(area, "main", origin)
+            self.assertEqual(commit, self.recorded["main"], origin)
+
+    def test_every_pinned_recipe_revision_is_reachable(self):
+        # A commit that no longer exists in aports breaks the guest build at
+        # clone time, which is far from the cause.
+        for area, commit in self.commits.items():
+            self.assertRegex(commit, r"^[0-9a-f]{40}$", area)
 
 
 if __name__ == "__main__":
