@@ -170,13 +170,17 @@ $PROOT /sbin/mkinitfs -F "base virtio 9p" -t /tmp/mkinitfs-stage "$($PROOT /bin/
 rm -rf "$ROOTFS/lib/modules"
 
 mkdir -p "$V86_SOURCE"
-git clone --filter=blob:none https://github.com/copy/v86.git "$V86_SOURCE"
-git -C "$V86_SOURCE" checkout --detach "$V86_COMMIT"
+git init -q "$V86_SOURCE"
+git -C "$V86_SOURCE" remote add origin https://github.com/copy/v86.git
+git -C "$V86_SOURCE" fetch --depth=1 origin "$V86_COMMIT"
+git -C "$V86_SOURCE" checkout --detach FETCH_HEAD
 [ "$(git -C "$V86_SOURCE" rev-parse HEAD)" = "$V86_COMMIT" ] || fail 'v86 source revision mismatch'
 git -C "$V86_SOURCE" apply /usr/local/share/browser-os/python-zstd-fallback.patch
 SEABIOS_SOURCE="$WORK/seabios"
-git clone --filter=blob:none https://git.seabios.org/seabios.git "$SEABIOS_SOURCE"
-git -C "$SEABIOS_SOURCE" checkout --detach "$SEABIOS_COMMIT"
+git init -q "$SEABIOS_SOURCE"
+git -C "$SEABIOS_SOURCE" remote add origin https://git.seabios.org/seabios.git
+git -C "$SEABIOS_SOURCE" fetch --depth=1 origin "$SEABIOS_COMMIT"
+git -C "$SEABIOS_SOURCE" checkout --detach FETCH_HEAD
 [ "$(git -C "$SEABIOS_SOURCE" rev-parse HEAD)" = "$SEABIOS_COMMIT" ] || fail 'SeaBIOS source revision mismatch'
 
 
