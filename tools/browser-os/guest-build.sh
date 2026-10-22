@@ -94,6 +94,9 @@ mkdir -p "$ROOTFS/usr/local/bin"
 cp /usr/local/share/browser-os/guest/about /usr/local/share/browser-os/guest/contact /usr/local/share/browser-os/guest/cv /usr/local/share/browser-os/guest/links /usr/local/share/browser-os/guest/projects /usr/local/share/browser-os/guest/tour /usr/local/share/browser-os/guest/open /usr/local/share/browser-os/guest/copy-contact /usr/local/share/browser-os/guest/set-locale "$ROOTFS/usr/local/bin/"
 install -D -m 0555 /usr/local/share/browser-os/guest/guestctl "$ROOTFS/usr/local/bin/guestctl"
 install -D -m 0555 /usr/local/share/browser-os/guest/browser-osd "$ROOTFS/usr/local/sbin/browser-osd"
+# This build installs the distro zsh, which never writes v2 control records.
+# Remove any stale producer marker so the broker runs without the channel.
+rm -f "$ROOTFS/etc/browser-os/zle-control-v2"
 install -D -m 0444 /usr/local/share/browser-os/guest/zle-hooks.zsh "$ROOTFS/etc/browser-os/zle-hooks.zsh"
 
 $PROOT /bin/sh -ec '

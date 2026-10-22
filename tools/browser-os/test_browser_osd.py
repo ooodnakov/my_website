@@ -66,7 +66,7 @@ class BrokerConstructionIntegrationTests(unittest.TestCase):
     class ExecReached(Exception):
         pass
 
-    def construct_parent(self):
+    def construct_parent(self, marker=True):
         visitor = type("Visitor", (), {
             "pw_name": "visitor", "pw_gid": 1000, "pw_uid": 1000,
             "pw_dir": "/home/visitor",
@@ -83,9 +83,11 @@ class BrokerConstructionIntegrationTests(unittest.TestCase):
                 patch.object(BROKER.Broker, "create_server", return_value=object()), \
                 patch.object(BROKER.pty, "fork", return_value=(5000, 103)), \
                 patch.object(BROKER.os, "set_blocking"), \
+                patch.object(BROKER.os.path, "exists", return_value=marker), \
                 patch.object(BROKER.Broker, "resize"):
             broker = BROKER.Broker()
-        self.addCleanup(broker.zle_control_parent.close)
+        if broker.zle_control_parent is not None:
+            self.addCleanup(broker.zle_control_parent.close)
         return broker
 
     def test_parent_fork_path_keeps_parent_control_socket_and_bootstraps(self):
@@ -133,6 +135,7 @@ class BrokerConstructionIntegrationTests(unittest.TestCase):
                 lambda broker: setattr(broker, "fifo_in", 102),
             ))
             stack.enter_context(patch.object(BROKER.Broker, "create_server", return_value=object()))
+            stack.enter_context(patch.object(BROKER.os.path, "exists", return_value=True))
             stack.enter_context(patch.object(BROKER.pty, "fork", return_value=(0, 103)))
             stack.enter_context(patch.object(BROKER.os, "set_blocking"))
             stack.enter_context(patch.object(BROKER.os, "set_inheritable"))
@@ -155,6 +158,73 @@ class BrokerConstructionIntegrationTests(unittest.TestCase):
         self.assertEqual(pairs[0][0].fileno(), -1)
         self.assertEqual(pairs[0][1].fileno(), -1)
         os.close(child_fd)
+
+    def test_stock_shell_mode_has_no_control_channel(self):
+        broker = self.construct_parent(marker=False)
+
+        self.assertIsNone(broker.zle_control_parent)
+        self.assertIsNone(broker.zle_control_child)
+        self.assertIsNotNone(broker.bootstrap_bytes_remaining)
+
+    def test_stock_child_fork_path_omits_control_fd_and_env(self):
+        visitor = type("Visitor", (), {
+            "pw_name": "visitor", "pw_gid": 1000, "pw_uid": 1000,
+            "pw_dir": "/home/visitor",
+        })()
+        seen = {}
+
+        def stop_exec(path, argv):
+            seen["path"] = path
+            seen["argv"] = argv
+            seen["env"] = dict(BROKER.os.environ)
+            raise self.ExecReached()
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(BROKER.os, "geteuid", return_value=0))
+            stack.enter_context(patch.object(BROKER, "load_guest_build_id", return_value="a" * 64))
+            stack.enter_context(patch.object(BROKER, "load_portfolio_ids", return_value=frozenset({"quick-cv"})))
+            stack.enter_context(patch.object(BROKER.pwd, "getpwnam", return_value=visitor))
+            stack.enter_context(patch.object(BROKER.os, "open", side_effect=(100, 101)))
+            stack.enter_context(patch.object(BROKER, "set_raw_115200"))
+            stack.enter_context(patch.object(BROKER.signal, "signal"))
+            socketpair = stack.enter_context(patch.object(BROKER.socket, "socketpair"))
+            dup2 = stack.enter_context(patch.object(BROKER.os, "dup2"))
+            close = stack.enter_context(patch.object(BROKER.os, "close"))
+            stack.enter_context(patch.object(BROKER.os, "execv", side_effect=stop_exec))
+            stack.enter_context(patch.object(
+                BROKER.Broker, "create_local_endpoints",
+                lambda broker: setattr(broker, "fifo_in", 102),
+            ))
+            stack.enter_context(patch.object(BROKER.Broker, "create_server", return_value=object()))
+            stack.enter_context(patch.object(BROKER.os.path, "exists", return_value=False))
+            stack.enter_context(patch.object(BROKER.pty, "fork", return_value=(0, 103)))
+            stack.enter_context(patch.object(BROKER.os, "set_blocking"))
+            stack.enter_context(patch.object(BROKER.os, "closerange"))
+            stack.enter_context(patch.object(BROKER.os, "initgroups"))
+            stack.enter_context(patch.object(BROKER.os, "setgid"))
+            stack.enter_context(patch.object(BROKER.os, "setuid"))
+            stack.enter_context(patch.object(BROKER.os, "chdir"))
+            stack.enter_context(patch.dict(BROKER.os.environ, {}, clear=True))
+            with self.assertRaises(self.ExecReached):
+                BROKER.Broker()
+
+        socketpair.assert_not_called()
+        dup2.assert_not_called()
+        close.assert_not_called()
+        self.assertEqual((seen["path"], seen["argv"]), ("/bin/zsh", ["zsh", "-l"]))
+        self.assertNotIn("ZSH_BROWSER_OS_CONTROL_FD", seen["env"])
+
+    def test_stock_mode_control_read_is_a_no_op(self):
+        broker = self.construct_parent(marker=False)
+        broker.frames = []
+        broker.errors = []
+        broker.frame = lambda operation, **fields: broker.frames.append((operation, fields))
+        broker.error = broker.errors.append
+
+        broker.process_zle_control()
+
+        self.assertEqual(broker.errors, [])
+        self.assertEqual(broker.frames, [])
 
     def test_com2_select_loop_processes_hello_locale_and_action_ack(self):
         broker = self.construct_parent()
