@@ -23,6 +23,8 @@ BUILD_IDENTITY = "/etc/browser-os/guest-build.json"
 SOCKET_PATH = "/run/browser-os/guestctl.sock"
 SHELL_OUT = "/run/browser-os/shell-out"
 FIFO_LIMIT = 65536
+SIGNAL_WINDOW = FIFO_LIMIT
+SIGNAL_HISTORY_LIMIT = 4096
 FRAME_LIMIT = 4096
 MAX_INT = 2147483647
 ACTIONS = {"tour", "plugins", "links", "projects", "contact", "github", "a", "ls", "eza", "clear"}
@@ -178,6 +180,8 @@ class Broker:
         self.com1_forwarded = 0
         self.com1_editor_forwarded = 0
         self.com1_signal_positions = []
+        self.com1_signal_compacted = 0
+        self.com1_signal_floor = 0
         self.input_queue = bytearray()
         self.gated_input = bytearray()
         self.fence = None
@@ -329,6 +333,7 @@ class Broker:
             if self.gated_input:
                 self.input_queue.extend(self.gated_input)
                 self.gated_input.clear()
+            self.compact_signal_history()
 
     def validate_envelope(self, value, first=False):
         base = {"v", "sessionId", "seq", "op"}
@@ -456,12 +461,17 @@ class Broker:
             self.zle_control_parent = None
 
     def isig_characters(self):
-        """Characters the line discipline consumes instead of the editor."""
+        """Signal characters, or None when the termios state is unreadable.
+
+        ISIG is a local-mode flag (c_lflag), never an input flag: testing
+        c_iflag matches IGNBRK there and silently classifies signals as
+        editor input.
+        """
         try:
             attributes = termios.tcgetattr(self.pty_master)
         except (OSError, termios.error):
             return None
-        if not attributes[0] & termios.ISIG:
+        if not attributes[3] & termios.ISIG:
             return frozenset()
         control = attributes[6]
         return frozenset(
@@ -470,6 +480,36 @@ class Broker:
             if byte and byte != b"\x00"
         )
 
+    def compact_signal_history(self):
+        """Discard signal positions no boundary can still need.
+
+        The stored history is bounded by SIGNAL_WINDOW bytes behind the write
+        cursor, and never truncated below an outstanding fence's target. If
+        even that window cannot be represented, the live fence is cancelled
+        with ``unknown`` and history collapses to the window floor; later
+        fences whose target precedes the floor are refused rather than guessed.
+        """
+        limit = self.com1_forwarded - SIGNAL_WINDOW
+        if self.fence is not None:
+            limit = min(limit, self.fence["target"])
+        limit = max(limit, self.com1_signal_floor)
+        if limit > self.com1_signal_floor:
+            keep = bisect.bisect_left(self.com1_signal_positions, limit)
+            if keep:
+                del self.com1_signal_positions[:keep]
+                self.com1_signal_compacted += keep
+            self.com1_signal_floor = limit
+        if len(self.com1_signal_positions) > SIGNAL_HISTORY_LIMIT:
+            if self.fence is not None:
+                self.frame("inputFenceAck", fenceId=self.fence["id"],
+                           inputBytes=self.fence["target"], state="unknown")
+                self.abort_fence()
+            drop = len(self.com1_signal_positions) - SIGNAL_HISTORY_LIMIT
+            floor = self.com1_signal_positions[drop]
+            del self.com1_signal_positions[:drop]
+            self.com1_signal_compacted += drop
+            self.com1_signal_floor = max(self.com1_signal_floor, floor)
+
     def note_forwarded(self, chunk):
         """Classify bytes actually written to the PTY as editor or signal input."""
         signals = self.isig_characters()
@@ -477,13 +517,17 @@ class Broker:
         for offset, value in enumerate(chunk):
             if signals is not None and bytes((value,)) in signals:
                 self.com1_signal_positions.append(base + offset)
-            else:
+            elif signals is not None:
                 self.com1_editor_forwarded += 1
         self.com1_forwarded = base + len(chunk)
+        self.compact_signal_history()
 
     def editor_bytes_before(self, target):
+        """Editor bytes below target, or None when that boundary is unavailable."""
+        if target < self.com1_signal_floor:
+            return None
         index = bisect.bisect_left(self.com1_signal_positions, target)
-        return target - index
+        return target - self.com1_signal_compacted - index
 
     def process_zle_control(self):
         try:
@@ -534,6 +578,10 @@ class Broker:
         if self.com1_input < target or self.com1_forwarded < target:
             return
         expected = self.editor_bytes_before(target)
+        if expected is None:
+            self.frame("inputFenceAck", fenceId=self.fence["id"], inputBytes=target, state="unknown")
+            self.abort_fence()
+            return
         if self.zle_input_ordinal < expected:
             return
         state = "busy" if self.zle_input_ordinal == expected and self.zle_state != 1 else "unknown"
@@ -738,7 +786,9 @@ class Broker:
                 if not self.fence.get("acknowledged"):
                     if self.com1_input >= self.fence["target"] and self.com1_forwarded >= self.fence["target"]:
                         expected = self.editor_bytes_before(self.fence["target"])
-                        state = "busy" if self.zle_input_ordinal == expected and self.zle_state != 1 else "unknown"
+                        state = ("busy" if expected is not None
+                                 and self.zle_input_ordinal == expected
+                                 and self.zle_state != 1 else "unknown")
                         self.frame("inputFenceAck", fenceId=self.fence["id"], inputBytes=self.fence["target"], state=state)
                     else:
                         self.error("badValue")

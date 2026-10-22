@@ -4,6 +4,7 @@ import importlib.util
 import pathlib
 import struct
 import socket
+import termios
 from contextlib import ExitStack
 from unittest.mock import patch
 import unittest
@@ -235,6 +236,8 @@ class FenceOrderingTests(unittest.TestCase):
         broker.com1_forwarded = 0
         broker.com1_editor_forwarded = 0
         broker.com1_signal_positions = []
+        broker.com1_signal_compacted = 0
+        broker.com1_signal_floor = 0
         broker.zle_input_ordinal = 0
         broker.zle_generation = 1
         broker.zle_state = 0
@@ -373,6 +376,8 @@ class SafePointRecordTests(unittest.TestCase):
         broker.com1_forwarded = 3
         broker.com1_editor_forwarded = 5
         broker.com1_signal_positions = []
+        broker.com1_signal_compacted = 0
+        broker.com1_signal_floor = 0
         broker.gated_input = bytearray()
         broker.fence = {"id": 7, "target": 3, "generation": 1, "deadline": 10**9}
         broker.frames = []
@@ -429,6 +434,127 @@ class SafePointRecordTests(unittest.TestCase):
         self.assertEqual(broker.errors, ["badFrame"])
         self.assertTrue(channel.closed)
         self.assertIsNotNone(broker.fence)
+
+
+class SignalClassificationTests(unittest.TestCase):
+    def setUp(self):
+        import pty
+        self.master, self.slave = pty.openpty()
+        self.addCleanup(os.close, self.slave)
+        self.addCleanup(os.close, self.master)
+
+    def broker(self):
+        broker = BROKER.Broker.__new__(BROKER.Broker)
+        broker.pty_master = self.master
+        broker.com1_input = 0
+        broker.com1_forwarded = 0
+        broker.com1_editor_forwarded = 0
+        broker.com1_signal_positions = []
+        broker.com1_signal_compacted = 0
+        broker.com1_signal_floor = 0
+        broker.fence = None
+        broker.gated_input = bytearray()
+        broker.frames = []
+        broker.frame = lambda operation, **fields: broker.frames.append((operation, fields))
+        return broker
+
+    def configure(self, isig=True, ignbrk=False, vintr=b"\x03"):
+        attributes = termios.tcgetattr(self.slave)
+        attributes[0] = (attributes[0] | termios.IGNBRK) if ignbrk else (attributes[0] & ~termios.IGNBRK)
+        attributes[3] = (attributes[3] | termios.ISIG) if isig else (attributes[3] & ~termios.ISIG)
+        attributes[6][termios.VINTR] = vintr
+        termios.tcsetattr(self.slave, termios.TCSANOW, attributes)
+
+    def test_isig_is_read_from_local_flags_not_input_flags(self):
+        self.configure(isig=True, ignbrk=False)
+        broker = self.broker()
+
+        classified = broker.isig_characters()
+        self.assertIn(b"\x03", classified)
+        broker.note_forwarded(b"\x03")
+        self.assertEqual((broker.com1_forwarded, broker.com1_editor_forwarded), (1, 0))
+        self.assertEqual(broker.com1_signal_positions, [0])
+
+        self.configure(isig=True, ignbrk=True)
+        self.assertIn(b"\x03", broker.isig_characters())
+
+    def test_disabled_isig_credits_the_byte_to_the_editor(self):
+        self.configure(isig=False)
+        broker = self.broker()
+
+        self.assertEqual(broker.isig_characters(), frozenset())
+        broker.note_forwarded(b"\x03")
+        self.assertEqual((broker.com1_forwarded, broker.com1_editor_forwarded), (1, 1))
+        self.assertEqual(broker.com1_signal_positions, [])
+
+    def test_configured_signal_character_is_classified(self):
+        self.configure(isig=True, vintr=b"\x07")
+        broker = self.broker()
+
+        classified = broker.isig_characters()
+        self.assertIn(b"\x07", classified)
+        self.assertNotIn(b"\x03", classified)
+        broker.note_forwarded(b"\x03\x07")
+        self.assertEqual(broker.com1_editor_forwarded, 1)
+        self.assertEqual(broker.com1_signal_positions, [1])
+
+    def test_unreadable_termios_credits_no_editor_bytes(self):
+        broker = self.broker()
+        with patch.object(BROKER.termios, "tcgetattr", side_effect=OSError("gone")):
+            broker.note_forwarded(b"abc")
+
+        self.assertEqual(broker.com1_forwarded, 3)
+        self.assertEqual(broker.com1_editor_forwarded, 0)
+        self.assertEqual(broker.editor_bytes_before(3), 3)
+
+    def test_signal_history_is_bounded_under_sustained_input(self):
+        self.configure(isig=True)
+        broker = self.broker()
+
+        for _ in range(17):
+            broker.note_forwarded(b"\x03" * 4096)
+
+        self.assertEqual(broker.com1_forwarded, 69632)
+        self.assertEqual(broker.com1_editor_forwarded, 0)
+        self.assertLessEqual(len(broker.com1_signal_positions), BROKER.SIGNAL_HISTORY_LIMIT)
+        self.assertGreater(broker.com1_signal_compacted, 0)
+        self.assertLessEqual(broker.com1_forwarded - broker.com1_signal_floor, BROKER.SIGNAL_WINDOW)
+
+    def test_compaction_preserves_an_outstanding_fence_boundary(self):
+        self.configure(isig=True)
+        broker = self.broker()
+        broker.fence = {"id": 7, "target": 100, "generation": 1, "deadline": 10**9}
+
+        broker.note_forwarded(b"\x03" * 200)
+        broker.note_forwarded(b"x" * 70000)
+
+        self.assertEqual(broker.editor_bytes_before(100), 0)
+        self.assertEqual(broker.com1_signal_compacted, 100)
+        self.assertLessEqual(len(broker.com1_signal_positions), BROKER.SIGNAL_HISTORY_LIMIT)
+
+    def test_unrepresentable_boundary_fails_closed(self):
+        self.configure(isig=True)
+        broker = self.broker()
+        broker.com1_input = 69632
+        broker.fence = {"id": 7, "target": 1, "generation": 1, "deadline": 10**9}
+        broker.zle_input_ordinal = 0
+        broker.zle_state = 1
+
+        for _ in range(17):
+            broker.note_forwarded(b"\x03" * 4096)
+
+        self.assertIsNone(broker.editor_bytes_before(0))
+        self.assertEqual(broker.frames, [("inputFenceAck", {
+            "fenceId": 7, "inputBytes": 1, "state": "unknown",
+        })])
+        self.assertIsNone(broker.fence)
+
+        broker.fence = {"id": 8, "target": 0, "generation": 1, "deadline": 10**9}
+        broker.com1_input = 0
+        broker.try_fence()
+        self.assertEqual(broker.frames[-1], ("inputFenceAck", {
+            "fenceId": 8, "inputBytes": 0, "state": "unknown",
+        }))
 
 
 class SequenceBoundaryTests(unittest.TestCase):
