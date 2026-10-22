@@ -5,6 +5,7 @@ import viteConfig from "../vite.config";
 import fs from "fs";
 import path from "path";
 import { nanoid } from "nanoid";
+import { registerBrowserOsAssetRoutes, serveDevelopmentSubapps } from "./static";
 
 const viteLogger = createLogger();
 
@@ -28,6 +29,11 @@ export async function setupVite(server: Server, app: Express) {
     server: serverOptions,
     appType: "custom",
   });
+  registerBrowserOsAssetRoutes(
+    app,
+    path.resolve(import.meta.dirname, "..", "client", "public", "browser-os"),
+  );
+  serveDevelopmentSubapps(app);
 
   app.use(vite.middlewares);
 

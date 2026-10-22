@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 
 for (const route of ["/", "/en", "/ru", "/cv/", "/cv/en", "/cv/ru", "/legacy/"]) {
-  test(`production route renders its app: ${route}`, async ({ page }) => {
+  test(`route renders its app: ${route}`, async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("response", (response) => {
@@ -26,7 +26,7 @@ for (const route of ["/", "/en", "/ru", "/cv/", "/cv/en", "/cv/ru", "/legacy/"])
   });
 }
 
-test("production legacy files and archive redirect are served", async ({ request }) => {
+test("legacy files and archive redirect are served", async ({ request }) => {
   for (const route of ["/cv-pdf/en", "/cv-pdf/ru"]) {
     const response = await request.get(route);
     expect(response.status()).toBe(200);
@@ -45,18 +45,26 @@ test("production legacy files and archive redirect are served", async ({ request
   expect(archivePage.headers()["content-type"]).toContain("text/html");
 });
 
-test("production browser OS release assets are all served with manifest hashes", async ({ request }) => {
-  const release = "/browser-os/alpine-3.24.2-v86-0.5.469";
+test("Browser OS release assets are all served with manifest hashes", async ({ request }) => {
+  test.setTimeout(120_000);
+  const release = "/browser-os/alpine-3.24.3-v86-0.5.469";
   const manifestResponse = await request.get(`${release}/manifest.json`);
-  expect(manifestResponse.status()).toBe(200);
+  expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
   const manifest = await manifestResponse.json();
+  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.release).toBe(release.slice("/browser-os/".length));
+  expect(manifest.guest.buildId).toMatch(/^[0-9a-f]{64}$/);
+  expect(manifest.assets[manifest.guest.buildIdentityPath]?.sha256).toBe(manifest.guest.buildId);
 
   const requiredAssets = [
     "alpine/vmlinuz",
     "alpine/initramfs",
     "alpine/9p/fs.json",
+    "v86/seabios.bin",
+    "v86/vgabios.bin",
     "v86/libv86.mjs",
     "v86/v86.wasm",
+    "v86/v86-fallback.wasm",
   ];
   for (const assetPath of requiredAssets) {
     expect(manifest.assets[assetPath], assetPath).toBeDefined();
@@ -69,4 +77,39 @@ test("production browser OS release assets are all served with manifest hashes",
     expect(body.length, assetPath).toBe(expected.bytes);
     expect(createHash("sha256").update(body).digest("hex"), assetPath).toBe(expected.sha256);
   }
+});
+
+test("Browser OS missing assets return JSON 404 and guest assets revalidate", async ({ request }) => {
+  const missing = await request.get("/browser-os/alpine-3.24.3-v86-0.5.469/v86/missing.wasm");
+  expect(missing.status()).toBe(404);
+  expect(missing.headers()["content-type"]).toContain("application/json");
+  expect(await missing.text()).not.toContain("<!doctype html>");
+
+  const release = "/browser-os/alpine-3.24.3-v86-0.5.469";
+  const manifestResponse = await request.get(`${release}/manifest.json`);
+  expect(manifestResponse.status(), "requires the generated guest manifest; build the pinned guest before this E2E suite").toBe(200);
+  const manifest = await manifestResponse.json();
+  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.release).toBe(release.slice("/browser-os/".length));
+  expect(manifest.guest.buildId).toMatch(/^[0-9a-f]{64}$/);
+  expect(manifest.assets[manifest.guest.buildIdentityPath]?.sha256).toBe(manifest.guest.buildId);
+  const wasm = await request.get(`${release}/${manifest.emulator.assetPaths.wasm}`);
+  expect(wasm.status()).toBe(200);
+  expect(wasm.headers()["content-type"]).toContain("application/wasm");
+  expect(wasm.headers()["cache-control"]).toContain("max-age=0");
+  const wasmEtag = wasm.headers()["etag"];
+  if (!wasmEtag) throw new Error("Expected a guest asset ETag");
+  const revalidatedWasm = await request.get(`${release}/${manifest.emulator.assetPaths.wasm}`, {
+    headers: { "If-None-Match": wasmEtag },
+  });
+  expect(revalidatedWasm.status()).toBe(304);
+
+  expect(wasm.headers()["cache-control"]).toContain("must-revalidate");
+  expect(manifestResponse.headers()["cache-control"]).toContain("no-cache");
+  const manifestEtag = manifestResponse.headers()["etag"];
+  if (!manifestEtag) throw new Error("Expected the manifest ETag");
+  const revalidatedManifest = await request.get(`${release}/manifest.json`, {
+    headers: { "If-None-Match": manifestEtag },
+  });
+  expect(revalidatedManifest.status()).toBe(304);
 });
